@@ -839,134 +839,63 @@ function MobileControllerContent() {
 
                 const bufferLength = analyser.frequencyBinCount;
                 const dataArray = new Uint8Array(bufferLength);
-                const timeData = new Uint8Array(analyser.fftSize);
 
-                // === PROFESSIONAL BLOW DETECTION ===
-                // Based on audio engineering research:
-                // - Wind/blow is <500Hz dominant, peaks <100Hz
-                // - Broadband noise (not tonal like speech)
-                // - Falls 5-8dB/octave
-                // - High amplitude in sub-bass region
-
-                // Smoothing for envelope detection
-                let smoothedLow = 0;
-                let smoothedMid = 0;
-                let prevAmplitude = 0;
+                // SIMPLIFIED BLOW DETECTION
+                // Higher thresholds, sustained duration required
+                let smoothedIntensity = 0;
+                let blowStartTime = 0;
+                const MIN_BLOW_DURATION = 150; // Must blow for 150ms
 
                 const analyze = () => {
                     if (!analyserRef.current) return;
 
                     analyserRef.current.getByteFrequencyData(dataArray);
-                    analyserRef.current.getByteTimeDomainData(timeData);
 
-                    // === FREQUENCY ANALYSIS ===
-                    // FFT bin resolution = sampleRate / fftSize
-                    // At 44100Hz with fftSize 256: ~172Hz per bin
-                    // Bin 0-2: 0-344Hz (sub-bass/bass where blow lives)
-                    // Bin 3-5: 344-860Hz (low-mid)
-                    // Bin 6+: 860Hz+ (mid/high)
-
-                    // Sub-bass region (0-350Hz) - PRIMARY BLOW ZONE
-                    const subBassBins = 3;
-                    let subBassSum = 0;
-                    for (let i = 0; i < subBassBins; i++) {
-                        subBassSum += dataArray[i];
+                    // Low-frequency energy (first 5 bins ~ 0-860Hz)
+                    let lowSum = 0;
+                    for (let i = 0; i < 5; i++) {
+                        lowSum += dataArray[i];
                     }
-                    const subBassAvg = subBassSum / subBassBins / 255;
+                    const lowAvg = lowSum / 5 / 255;
 
-                    // Low-mid region (350-900Hz)
-                    const lowMidStart = 3;
-                    const lowMidEnd = 6;
-                    let lowMidSum = 0;
-                    for (let i = lowMidStart; i < lowMidEnd; i++) {
-                        lowMidSum += dataArray[i];
+                    // High-frequency energy for ratio
+                    let highSum = 0;
+                    for (let i = 20; i < bufferLength; i++) {
+                        highSum += dataArray[i];
                     }
-                    const lowMidAvg = lowMidSum / (lowMidEnd - lowMidStart) / 255;
+                    const highAvg = highSum / (bufferLength - 20) / 255;
 
-                    // Mid-high region (900Hz+) - Should be LOW for blow
-                    const midHighStart = 6;
-                    let midHighSum = 0;
-                    for (let i = midHighStart; i < bufferLength; i++) {
-                        midHighSum += dataArray[i];
-                    }
-                    const midHighAvg = midHighSum / (bufferLength - midHighStart) / 255;
+                    // Ratio: low should dominate high for blow
+                    const ratio = lowAvg / (highAvg + 0.001);
 
-                    // === SPECTRAL FLATNESS (Blow = broadband = high flatness) ===
-                    // Geometric mean / Arithmetic mean
-                    let geoSum = 0;
-                    let ariSum = 0;
-                    const startBin = 0;
-                    const endBin = 10; // First 10 bins
-                    for (let i = startBin; i < endBin; i++) {
-                        const val = dataArray[i] + 1; // Avoid log(0)
-                        geoSum += Math.log(val);
-                        ariSum += val;
-                    }
-                    const geoMean = Math.exp(geoSum / (endBin - startBin));
-                    const ariMean = ariSum / (endBin - startBin);
-                    const spectralFlatness = geoMean / (ariMean + 0.001);
-
-                    // === AMPLITUDE ENVELOPE (Peak detection) ===
-                    let maxAmplitude = 0;
-                    for (let i = 0; i < timeData.length; i++) {
-                        const amplitude = Math.abs(timeData[i] - 128);
-                        if (amplitude > maxAmplitude) maxAmplitude = amplitude;
-                    }
-                    const normalizedAmplitude = maxAmplitude / 128;
-
-                    // Envelope smoothing (fast attack, slow release)
-                    const attackSpeed = 0.5;
-                    const releaseSpeed = 0.05;
-                    if (normalizedAmplitude > prevAmplitude) {
-                        prevAmplitude += (normalizedAmplitude - prevAmplitude) * attackSpeed;
-                    } else {
-                        prevAmplitude += (normalizedAmplitude - prevAmplitude) * releaseSpeed;
-                    }
-
-                    // === BLOW DETECTION CRITERIA ===
-                    // 1. Strong sub-bass (>0.15)
-                    // 2. Sub-bass dominates mid-high (ratio > 2.5)
-                    // 3. Reasonable spectral flatness (broadband, > 0.3)
-                    // 4. Amplitude envelope active (> 0.1)
-
-                    const subBassToMidRatio = subBassAvg / (midHighAvg + 0.001);
-                    const subBassToLowMidRatio = subBassAvg / (lowMidAvg + 0.001);
-
-                    // Smooth the intensity
-                    const rawIntensity = subBassAvg;
-                    smoothedLow += (rawIntensity - smoothedLow) * 0.3;
-
-                    const intensity = Math.min(1, smoothedLow * 2.5);
+                    // Slow smoothing to reduce noise
+                    smoothedIntensity += (lowAvg - smoothedIntensity) * 0.1;
+                    const intensity = Math.min(1, smoothedIntensity * 2);
                     setBlowIntensity(intensity);
 
                     const now = Date.now();
 
-                    // BLOW DETECTION: Multi-criteria check
-                    const blowing =
-                        subBassAvg > 0.12 &&           // Strong sub-bass
-                        subBassToMidRatio > 2.0 &&      // Sub-bass dominates highs
-                        subBassToLowMidRatio > 0.8 &&   // Not just speech
-                        spectralFlatness > 0.25 &&      // Broadband (not tonal)
-                        prevAmplitude > 0.08;           // Actual amplitude
+                    // SIMPLE CHECK: high threshold + ratio + sustained
+                    const isBlowCandidate = lowAvg > 0.25 && ratio > 4.0;
 
-                    setIsBlowing(blowing);
-
-                    if (blowing && (now - lastBlowRef.current) > BLOW_COOLDOWN) {
-                        lastBlowRef.current = now;
-                        setBlowCount(prev => prev + 1);
+                    let blowing = false;
+                    if (isBlowCandidate) {
+                        if (blowStartTime === 0) blowStartTime = now;
+                        blowing = (now - blowStartTime) > MIN_BLOW_DURATION;
+                    } else {
+                        blowStartTime = 0;
                     }
 
-                    // Send to desktop with richer data
+                    if (blowing && !isBlowing) {
+                        setBlowCount(prev => prev + 1);
+                    }
+                    setIsBlowing(blowing);
+
+                    // Send to desktop
                     if (connRef.current && connRef.current.open) {
                         connRef.current.send({
                             type: 'BLOW_DATA',
-                            payload: {
-                                intensity,
-                                isBlowing: blowing,
-                                timestamp: now,
-                                subBass: subBassAvg,
-                                spectralFlatness,
-                            }
+                            payload: { intensity, isBlowing: blowing, timestamp: now }
                         });
                     }
 

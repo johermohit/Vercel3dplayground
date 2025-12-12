@@ -60,6 +60,10 @@ export function usePeerHost() {
                             // Store wand position for cloud experiment
                             useConnectionStore.getState().setSensorData({ wand: data.payload });
                         }
+                        if (data.type === 'BLOW_DATA') {
+                            // Store blow intensity for blow experiments
+                            useConnectionStore.getState().setSensorData({ blow: data.payload });
+                        }
                     });
 
                     conn.on('close', () => {

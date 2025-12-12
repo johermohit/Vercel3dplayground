@@ -16,7 +16,8 @@ interface ConnectionState {
         screen?: { width: number; height: number; type: string };
         touch?: { force: number; radius: number; angle: number };
         clay?: { x: number; y: number; dx?: number; dy?: number; force: number; radius: number };
-        wand?: { x: number; y: number; z: number; calibrated: boolean };
+        wand?: { x: number; y: 0; z: number; calibrated: boolean };
+        blow?: { intensity: number; isBlowing: boolean; timestamp: number };
     };
     setSessionId: (id: string) => void;
     setConnected: (status: boolean) => void;

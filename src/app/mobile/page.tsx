@@ -704,8 +704,8 @@ function MobileControllerContent() {
                                 onClick={requestPermission}
                                 disabled={!isConnected}
                                 className={`mt-4 px-10 py-4 rounded-xl font-bold text-lg transition-all shadow-lg ${isConnected
-                                        ? 'bg-sky-500 hover:bg-sky-400 active:scale-95 shadow-sky-500/30'
-                                        : 'bg-gray-600 cursor-not-allowed'
+                                    ? 'bg-sky-500 hover:bg-sky-400 active:scale-95 shadow-sky-500/30'
+                                    : 'bg-gray-600 cursor-not-allowed'
                                     }`}
                             >
                                 {isConnected ? 'START CALIBRATION' : 'WAITING FOR CONNECTION'}
@@ -785,6 +785,210 @@ function MobileControllerContent() {
                 {/* Footer */}
                 <div className="p-3 bg-black/30 text-[10px] text-center text-sky-500/50 border-t border-white/5">
                     {calibrationState === 'active' ? 'WAND ACTIVE · TILT TO CONTROL' : 'TOUCH THE CLOUDS · v07'}
+                </div>
+            </div>
+        );
+    }
+
+    // --- BLOW MODE (Microphone blow detection) ---
+    if (modeParam === 'blow') {
+        const [isListening, setIsListening] = useState(false);
+        const [blowIntensity, setBlowIntensity] = useState(0);
+        const [isBlowing, setIsBlowing] = useState(false);
+        const [blowCount, setBlowCount] = useState(0);
+        const [permissionStatus, setPermissionStatus] = useState<'pending' | 'granted' | 'denied'>('pending');
+
+        const audioContextRef = useRef<AudioContext | null>(null);
+        const analyserRef = useRef<AnalyserNode | null>(null);
+        const streamRef = useRef<MediaStream | null>(null);
+        const animationRef = useRef<number>(0);
+
+        // Detection parameters
+        const BLOW_THRESHOLD = 0.12;
+        const BLOW_COOLDOWN = 200;
+        const lastBlowRef = useRef(0);
+
+        const startListening = async () => {
+            try {
+                // Check if mediaDevices is available (requires HTTPS or localhost)
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    setPermissionStatus('denied');
+                    alert('Microphone access requires HTTPS. Make sure you\'re accessing via a secure connection.');
+                    return;
+                }
+
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+                });
+
+                streamRef.current = stream;
+                setPermissionStatus('granted');
+
+                const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+                audioContextRef.current = audioContext;
+
+                const analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                analyser.smoothingTimeConstant = 0.3;
+                analyserRef.current = analyser;
+
+                const source = audioContext.createMediaStreamSource(stream);
+                source.connect(analyser);
+
+                setIsListening(true);
+
+                const bufferLength = analyser.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+
+                const analyze = () => {
+                    if (!analyserRef.current) return;
+
+                    analyserRef.current.getByteFrequencyData(dataArray);
+
+                    // Focus on low frequencies (blow sounds)
+                    let lowFreqSum = 0;
+                    const lowBins = 15;
+                    for (let i = 0; i < lowBins; i++) {
+                        lowFreqSum += dataArray[i];
+                    }
+                    const lowFreqAvg = lowFreqSum / lowBins / 255;
+
+                    // High frequency for ratio comparison
+                    const highStart = Math.floor(bufferLength * 0.4);
+                    let highFreqSum = 0;
+                    for (let i = highStart; i < bufferLength; i++) {
+                        highFreqSum += dataArray[i];
+                    }
+                    const highFreqAvg = highFreqSum / (bufferLength - highStart) / 255;
+
+                    const blowRatio = lowFreqAvg / (highFreqAvg + 0.01);
+                    const intensity = Math.min(1, lowFreqAvg * 2);
+
+                    setBlowIntensity(intensity);
+
+                    const now = Date.now();
+                    const blowing = intensity > BLOW_THRESHOLD && blowRatio > 1.8;
+
+                    setIsBlowing(blowing);
+
+                    if (blowing && (now - lastBlowRef.current) > BLOW_COOLDOWN) {
+                        lastBlowRef.current = now;
+                        setBlowCount(prev => prev + 1);
+                    }
+
+                    // Send to desktop
+                    if (connRef.current && connRef.current.open) {
+                        connRef.current.send({
+                            type: 'BLOW_DATA',
+                            payload: { intensity, isBlowing: blowing, timestamp: now }
+                        });
+                    }
+
+                    animationRef.current = requestAnimationFrame(analyze);
+                };
+
+                analyze();
+
+            } catch (err: any) {
+                setPermissionStatus('denied');
+                console.error("Mic error:", err);
+            }
+        };
+
+        const stopListening = () => {
+            if (animationRef.current) cancelAnimationFrame(animationRef.current);
+            if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+            if (audioContextRef.current) audioContextRef.current.close();
+            setIsListening(false);
+            setBlowIntensity(0);
+            setIsBlowing(false);
+        };
+
+        useEffect(() => () => stopListening(), []);
+
+        return (
+            <div className="h-full w-full bg-gradient-to-b from-cyan-950 to-gray-900 text-white font-mono flex flex-col touch-none select-none overflow-hidden">
+                {/* Header */}
+                <div className="p-4 flex justify-between items-center border-b border-white/10">
+                    <h1 className="text-lg font-bold text-cyan-300">🎤 BLOW DETECTOR</h1>
+                    <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+                </div>
+
+                {/* Main */}
+                <div className="flex-1 flex flex-col items-center justify-center p-6">
+                    {!isListening ? (
+                        <div className="text-center space-y-6">
+                            <div className="text-8xl">🎤</div>
+                            <h2 className="text-xl font-bold text-cyan-200">Microphone Access</h2>
+                            <p className="text-sm text-cyan-400/70 max-w-[250px]">
+                                Tap to enable mic and start detecting your breath.
+                            </p>
+                            <button
+                                onClick={startListening}
+                                disabled={!isConnected}
+                                className={`px-10 py-4 rounded-xl font-bold text-lg transition-all ${isConnected
+                                        ? 'bg-cyan-500 hover:bg-cyan-400 active:scale-95'
+                                        : 'bg-gray-600 cursor-not-allowed'
+                                    }`}
+                            >
+                                {isConnected ? 'START LISTENING' : 'WAITING FOR CONNECTION'}
+                            </button>
+                            {permissionStatus === 'denied' && (
+                                <div className="text-center space-y-1">
+                                    <p className="text-red-400 text-xs">Microphone access failed</p>
+                                    <p className="text-yellow-400/70 text-[10px]">
+                                        Mic requires HTTPS. Use Vercel deployment or ngrok for testing.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <div className="w-full max-w-xs space-y-8">
+                            {/* Blow indicator */}
+                            <div className="text-center">
+                                <div className={`text-9xl transition-transform ${isBlowing ? 'scale-125' : 'scale-100'}`}>
+                                    {isBlowing ? '💨' : '🎤'}
+                                </div>
+                                <p className={`text-sm mt-4 ${isBlowing ? 'text-cyan-400' : 'text-gray-500'}`}>
+                                    {isBlowing ? 'BLOWING!' : 'Blow on mic...'}
+                                </p>
+                            </div>
+
+                            {/* Intensity meter */}
+                            <div className="space-y-2">
+                                <div className="flex justify-between text-xs text-cyan-400/70">
+                                    <span>INTENSITY</span>
+                                    <span className="font-bold">{Math.round(blowIntensity * 100)}%</span>
+                                </div>
+                                <div className="h-4 bg-gray-800 rounded-full overflow-hidden">
+                                    <div
+                                        className={`h-full transition-all duration-75 rounded-full ${isBlowing ? 'bg-gradient-to-r from-cyan-500 to-blue-400' : 'bg-gray-600'
+                                            }`}
+                                        style={{ width: `${blowIntensity * 100}%` }}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Count */}
+                            <div className="text-center">
+                                <div className="text-5xl font-bold text-cyan-400">{blowCount}</div>
+                                <div className="text-xs text-gray-500 mt-1">BLOWS DETECTED</div>
+                            </div>
+
+                            {/* Stop button */}
+                            <button
+                                onClick={stopListening}
+                                className="w-full py-3 bg-red-600/80 hover:bg-red-500 rounded-xl font-bold transition-colors"
+                            >
+                                STOP
+                            </button>
+                        </div>
+                    )}
+                </div>
+
+                {/* Footer */}
+                <div className="p-3 bg-black/30 text-[10px] text-center text-cyan-500/50 border-t border-white/5">
+                    {isListening ? 'LISTENING · BLOW ON MIC' : 'BLOW DETECTOR · v08'}
                 </div>
             </div>
         );

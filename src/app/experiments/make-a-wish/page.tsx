@@ -96,7 +96,7 @@ function DandelionScene() {
                 }
             });
 
-            if (newProgress >= 1 && phase !== 'done') {
+            if (newProgress >= 1) {
                 setPhase('done');
             }
         }

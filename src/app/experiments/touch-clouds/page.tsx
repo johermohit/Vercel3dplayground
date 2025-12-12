@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useRef, useMemo, useState, useEffect } from "react";
+import React, { Suspense, useRef, useMemo } from "react";
 import Link from "next/link";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { shaderMaterial } from "@react-three/drei";
@@ -9,14 +9,13 @@ import { usePeerHost } from "@/hooks/usePeerHost";
 import { useConnectionStore } from "@/store/connectionStore";
 import QROverlay from "@/components/QROverlay";
 
-// Cloud Shader Material with FBM noise
+// Fluffy Cloud Shader - Cotton-like volumetric appearance
 const CloudMaterial = shaderMaterial(
     {
         uTime: 0,
         uWandX: 0,
         uWandY: 0,
         uWandZ: 0,
-        uReveal: 0,
     },
     // Vertex Shader
     `
@@ -26,97 +25,142 @@ const CloudMaterial = shaderMaterial(
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }
     `,
-    // Fragment Shader - Layered FBM Clouds
+    // Fragment Shader - Fluffy Cotton Clouds
     `
     uniform float uTime;
     uniform float uWandX;
     uniform float uWandY;
     uniform float uWandZ;
-    uniform float uReveal;
     
     varying vec2 vUv;
     
-    // Hash function
-    float hash(vec2 p) {
-        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+    // Better hash for smoother noise
+    vec3 hash33(vec3 p3) {
+        p3 = fract(p3 * vec3(.1031, .1030, .0973));
+        p3 += dot(p3, p3.yxz + 33.33);
+        return fract((p3.xxy + p3.yxx) * p3.zyx);
     }
     
-    // Value noise
-    float noise(vec2 p) {
-        vec2 i = floor(p);
-        vec2 f = fract(p);
-        f = f * f * (3.0 - 2.0 * f);
+    // 3D Value noise for volumetric feel
+    float noise3D(vec3 p) {
+        vec3 i = floor(p);
+        vec3 f = fract(p);
+        f = f * f * (3.0 - 2.0 * f); // Smoothstep
         
-        float a = hash(i);
-        float b = hash(i + vec2(1.0, 0.0));
-        float c = hash(i + vec2(0.0, 1.0));
-        float d = hash(i + vec2(1.0, 1.0));
+        float n = i.x + i.y * 157.0 + i.z * 113.0;
         
-        return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+        vec4 s1 = vec4(
+            fract(sin(n) * 43758.5453),
+            fract(sin(n + 1.0) * 43758.5453),
+            fract(sin(n + 157.0) * 43758.5453),
+            fract(sin(n + 158.0) * 43758.5453)
+        );
+        vec4 s2 = vec4(
+            fract(sin(n + 113.0) * 43758.5453),
+            fract(sin(n + 114.0) * 43758.5453),
+            fract(sin(n + 270.0) * 43758.5453),
+            fract(sin(n + 271.0) * 43758.5453)
+        );
+        
+        vec4 m = mix(s1, s2, f.z);
+        vec2 m2 = mix(m.xy, m.zw, f.y);
+        return mix(m2.x, m2.y, f.x);
     }
     
-    // FBM (Fractal Brownian Motion) - realistic cloud density
-    float fbm(vec2 p) {
+    // FBM with 3D noise for fluffy effect
+    float fbmCloud(vec3 p) {
         float value = 0.0;
         float amplitude = 0.5;
         float frequency = 1.0;
         
-        for(int i = 0; i < 5; i++) {
-            value += amplitude * noise(p * frequency);
+        for(int i = 0; i < 6; i++) {
+            value += amplitude * noise3D(p * frequency);
             amplitude *= 0.5;
             frequency *= 2.0;
         }
         return value;
     }
     
+    // Cloud density function - creates puffy shapes
+    float cloudDensity(vec3 p, float t) {
+        // Base cloud shape
+        float cloud = fbmCloud(p * 2.0 + vec3(t * 0.1, 0.0, t * 0.05));
+        
+        // Add billowy puffs
+        float puffs = fbmCloud(p * 4.0 - vec3(t * 0.2, t * 0.1, 0.0)) * 0.5;
+        
+        // Combine for cotton-like effect
+        cloud = cloud * 0.7 + puffs * 0.3;
+        
+        // Threshold to create defined edges
+        cloud = smoothstep(0.3, 0.7, cloud);
+        
+        return cloud;
+    }
+    
     void main() {
         vec2 uv = vUv;
-        float t = uTime * 0.1;
+        float t = uTime;
         
-        // Apply wand position offset (wiping effect)
-        vec2 center = vec2(0.5 + uWandX * 0.3, 0.5 + uWandY * 0.3);
+        // Wand position affects viewing direction
+        vec2 wandOffset = vec2(uWandX, uWandY) * 0.5;
+        vec2 shiftedUv = uv - 0.5 + wandOffset;
         
-        // Distance from wand position (for reveal effect)
-        float distFromWand = length(uv - center);
+        // Z controls depth/reveal - starts at 1 (full clouds), goes to 0 (revealed)
+        float depth = 1.0 - uWandZ; // Invert: push forward = reveal
         
-        // Z controls reveal intensity
-        float reveal = uWandZ * 1.5;
+        // Create 3D position for volumetric sampling
+        vec3 cloudPos = vec3(shiftedUv * 3.0, depth * 2.0);
         
-        // Create layered clouds with different speeds
-        float cloud1 = fbm(uv * 3.0 + t + vec2(uWandX * 0.5, uWandY * 0.5));
-        float cloud2 = fbm(uv * 5.0 - t * 0.7 + vec2(-uWandX * 0.3, uWandY * 0.3));
-        float cloud3 = fbm(uv * 8.0 + t * 0.3);
+        // Sample multiple cloud layers for depth
+        float layer1 = cloudDensity(cloudPos, t);
+        float layer2 = cloudDensity(cloudPos + vec3(0.5, 0.3, 0.8), t * 0.8) * 0.7;
+        float layer3 = cloudDensity(cloudPos + vec3(-0.3, 0.7, 1.5), t * 0.6) * 0.5;
         
-        // Combine layers with depth
-        float cloudDensity = cloud1 * 0.5 + cloud2 * 0.3 + cloud3 * 0.2;
+        // Combine layers with depth-based visibility
+        float combinedCloud = layer1 + layer2 * depth + layer3 * depth * depth;
+        combinedCloud = clamp(combinedCloud, 0.0, 1.0);
         
-        // Apply reveal based on Z (pushing through clouds)
-        // The closer Z is to 1, the more the clouds part
-        float revealMask = smoothstep(reveal * 0.5, reveal * 0.8, distFromWand);
-        cloudDensity *= revealMask;
+        // Apply reveal mask based on distance from center
+        float distFromCenter = length(shiftedUv);
+        float revealMask = smoothstep(0.0, 0.5 + depth * 0.5, distFromCenter);
         
-        // Wipe effect - X/Y movement clears smoke
-        float wipeFactor = 1.0 - smoothstep(0.0, 0.4, length(vec2(uWandX, uWandY)));
-        cloudDensity *= mix(1.0, wipeFactor, 0.5);
+        // When Z is high (pushed forward), center reveals
+        float centerReveal = (1.0 - depth) * (1.0 - smoothstep(0.0, 0.4, distFromCenter));
+        combinedCloud *= mix(1.0, revealMask, centerReveal);
         
-        // Cloud color gradient (white to light blue sky)
-        vec3 cloudColor = vec3(0.9, 0.92, 0.95);
-        vec3 skyColor = vec3(0.4, 0.6, 0.9);
-        vec3 deepSkyColor = vec3(0.1, 0.3, 0.7);
+        // Cloud colors - soft, fluffy white with subtle variation
+        vec3 cloudWhite = vec3(0.98, 0.98, 1.0);
+        vec3 cloudShadow = vec3(0.7, 0.75, 0.85);
+        vec3 cloudHighlight = vec3(1.0, 1.0, 1.0);
         
-        // Mix based on density and reveal
-        vec3 finalColor = mix(skyColor, cloudColor, cloudDensity);
+        // Sky colors
+        vec3 skyBlue = vec3(0.4, 0.6, 0.95);
+        vec3 skyHorizon = vec3(0.7, 0.85, 1.0);
+        vec3 sunGlow = vec3(1.0, 0.95, 0.8);
         
-        // At high reveal (Z pushed forward), show deep sky behind
-        float skyReveal = smoothstep(0.3, 0.8, reveal) * (1.0 - revealMask);
-        finalColor = mix(finalColor, deepSkyColor, skyReveal);
+        // Sky gradient
+        float skyGradient = uv.y;
+        vec3 skyColor = mix(skyHorizon, skyBlue, skyGradient);
         
-        // Add subtle golden light where clouds part
-        float lightBeam = (1.0 - distFromWand) * reveal * 0.5;
-        finalColor += vec3(1.0, 0.9, 0.7) * lightBeam * 0.3;
+        // Add sun glow at top center
+        float sunDist = length(vec2(uv.x - 0.5, uv.y - 0.8));
+        skyColor += sunGlow * 0.3 * smoothstep(0.4, 0.0, sunDist);
         
-        // Vignette for depth
-        float vignette = 1.0 - length(uv - 0.5) * 0.5;
+        // Cloud shading - fake volumetric lighting
+        float lighting = 0.5 + 0.5 * noise3D(cloudPos * 5.0 + t * 0.2);
+        vec3 cloudColor = mix(cloudShadow, cloudWhite, lighting);
+        cloudColor = mix(cloudColor, cloudHighlight, pow(lighting, 3.0) * 0.5);
+        
+        // Blend cloud with sky
+        vec3 finalColor = mix(skyColor, cloudColor, combinedCloud * depth);
+        
+        // Add golden rim light where clouds meet revealed sky
+        float rimLight = centerReveal * combinedCloud * 0.5;
+        finalColor += sunGlow * rimLight;
+        
+        // Subtle vignette
+        float vignette = 1.0 - length(uv - 0.5) * 0.3;
         finalColor *= vignette;
         
         gl_FragColor = vec4(finalColor, 1.0);
@@ -128,7 +172,7 @@ function Clouds() {
     const materialRef = useRef<THREE.ShaderMaterial>(null);
     const material = useMemo(() => new CloudMaterial(), []);
 
-    // Smoothed wand position
+    // Smoothed wand position with spring-back
     const smoothed = useRef({ x: 0, y: 0, z: 0 });
 
     useFrame((state) => {
@@ -138,8 +182,8 @@ function Clouds() {
         const { sensorData } = useConnectionStore.getState();
         const wand = sensorData.wand || { x: 0, y: 0, z: 0, calibrated: false };
 
-        // Smooth interpolation
-        const lerpFactor = 0.08;
+        // Smooth interpolation (spring-like for responsiveness)
+        const lerpFactor = 0.12;
         smoothed.current.x += (wand.x - smoothed.current.x) * lerpFactor;
         smoothed.current.y += (wand.y - smoothed.current.y) * lerpFactor;
         smoothed.current.z += (wand.z - smoothed.current.z) * lerpFactor;
@@ -150,12 +194,11 @@ function Clouds() {
         mat.uWandX = smoothed.current.x;
         mat.uWandY = smoothed.current.y;
         mat.uWandZ = smoothed.current.z;
-        mat.uReveal = smoothed.current.z;
     });
 
     return (
         <mesh>
-            <planeGeometry args={[12, 12]} />
+            <planeGeometry args={[14, 14]} />
             <primitive object={material} ref={materialRef} attach="material" />
         </mesh>
     );
@@ -163,19 +206,19 @@ function Clouds() {
 
 function SceneContent() {
     usePeerHost();
-    const { isConnected, sensorData } = useConnectionStore();
+    const { sensorData } = useConnectionStore();
     const wand = sensorData.wand;
 
     return (
         <>
-            <color attach="background" args={["#1a2a4a"]} />
+            <color attach="background" args={["#4a6fa5"]} />
             <Clouds />
 
-            {/* Wand indicator sphere */}
+            {/* Wand indicator - subtle glow sphere */}
             {wand && wand.calibrated && (
-                <mesh position={[wand.x * 3, wand.y * 3, wand.z * 2]}>
-                    <sphereGeometry args={[0.1, 16, 16]} />
-                    <meshBasicMaterial color="#ffffff" transparent opacity={0.5} />
+                <mesh position={[wand.x * 4, wand.y * 4, 1 + wand.z * 2]}>
+                    <sphereGeometry args={[0.08, 16, 16]} />
+                    <meshBasicMaterial color="#ffffff" transparent opacity={0.6} />
                 </mesh>
             )}
         </>
@@ -199,10 +242,10 @@ export default function TouchCloudsPage() {
             {/* Header Overlay */}
             <div className="absolute top-0 left-0 p-8 z-10 flex items-start gap-4">
                 <div className="pointer-events-none">
-                    <h1 className="text-4xl font-bold tracking-tighter text-white/50">07. TOUCH THE CLOUDS</h1>
-                    <p className="text-xs font-mono text-white/30 mt-2">
+                    <h1 className="text-4xl font-bold tracking-tighter text-white/60">07. TOUCH THE CLOUDS</h1>
+                    <p className="text-xs font-mono text-white/40 mt-2">
                         {wand?.calibrated
-                            ? "MOVE PHONE TO PART THE CLOUDS · PUSH FORWARD TO REVEAL"
+                            ? "TILT PHONE TO EXPLORE · LEAN FORWARD TO REVEAL SKY"
                             : "CONNECT PHONE · CALIBRATE · EXPLORE"
                         }
                     </p>

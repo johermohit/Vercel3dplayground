@@ -552,17 +552,19 @@ function MobileControllerContent() {
         );
     }
 
-    // --- CLOUDS MODE (Touch the Clouds) ---
+    // --- CLOUDS MODE (Touch the Clouds) - Orientation-based tracking ---
     if (modeParam === 'clouds') {
         const [calibrationState, setCalibrationState] = useState<'waiting' | 'countdown' | 'active'>('waiting');
         const [countdown, setCountdown] = useState(5);
         const [wandPosition, setWandPosition] = useState({ x: 0, y: 0, z: 0 });
 
-        // Velocity and position tracking for sensor fusion
-        const velocityRef = useRef({ x: 0, y: 0, z: 0 });
-        const positionRef = useRef({ x: 0, y: 0, z: 0 });
-        const lastTimeRef = useRef(0);
-        const gravityRef = useRef({ x: 0, y: 0, z: 9.8 });
+        // Calibration baseline (captured at end of countdown)
+        const baselineRef = useRef({ beta: 0, gamma: 0 });
+
+        // Virtual box dimensions (normalized -1 to 1)
+        const maxTiltX = 30; // degrees of gamma (left/right tilt)
+        const maxTiltY = 30; // degrees of beta (forward/back tilt)
+        const maxPushZ = 40; // degrees of beta to reach max Z
 
         // Start calibration countdown
         const startCalibration = () => {
@@ -578,10 +580,8 @@ function MobileControllerContent() {
                 const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
                 return () => clearTimeout(timer);
             } else {
-                // Calibration complete - capture gravity baseline
+                // Calibration complete - next orientation reading becomes baseline
                 setCalibrationState('active');
-                positionRef.current = { x: 0, y: 0, z: 0 };
-                velocityRef.current = { x: 0, y: 0, z: 0 };
 
                 // Send calibrated state
                 if (connRef.current && connRef.current.open) {
@@ -593,81 +593,79 @@ function MobileControllerContent() {
             }
         }, [calibrationState, countdown]);
 
-        // Sensor fusion - process accelerometer and gyro data
+        // Orientation-based tracking (AR/VR style)
         useEffect(() => {
             if (calibrationState !== 'active') return;
             if (!connRef.current || !connRef.current.open) return;
 
-            let animationId: number;
-            const damping = 0.92; // Velocity damping to reduce drift
-            const sensitivity = 0.002; // Position sensitivity
-            const maxPosition = 1.0; // Clamp to -1 to 1
+            let baselineCaptured = false;
 
-            const handleMotion = (e: DeviceMotionEvent) => {
-                const now = performance.now();
-                const dt = lastTimeRef.current ? (now - lastTimeRef.current) / 1000 : 0.016;
-                lastTimeRef.current = now;
+            const handleOrientation = (e: DeviceOrientationEvent) => {
+                if (e.beta === null || e.gamma === null) return;
 
-                if (!e.accelerationIncludingGravity) return;
+                const beta = e.beta; // -180 to 180 (pitch: tilt forward/back)
+                const gamma = e.gamma; // -90 to 90 (roll: tilt left/right)
 
-                const ax = e.accelerationIncludingGravity.x || 0;
-                const ay = e.accelerationIncludingGravity.y || 0;
-                const az = e.accelerationIncludingGravity.z || 0;
-
-                // Subtract estimated gravity (phone flat = z points up = -9.8)
-                // When phone tilts, distribute gravity across axes
-                const netX = ax;
-                const netY = ay;
-                const netZ = az - 9.8; // Subtract gravity for forward/back movement
-
-                // Update velocity with damping
-                velocityRef.current.x = (velocityRef.current.x + netX * dt) * damping;
-                velocityRef.current.y = (velocityRef.current.y + netY * dt) * damping;
-                velocityRef.current.z = (velocityRef.current.z + netZ * dt) * damping;
-
-                // Stillness detection - reset velocity when nearly still
-                const accelMag = Math.sqrt(ax * ax + ay * ay + az * az);
-                if (Math.abs(accelMag - 9.8) < 0.5) {
-                    velocityRef.current.x *= 0.8;
-                    velocityRef.current.y *= 0.8;
-                    velocityRef.current.z *= 0.8;
+                // Capture baseline on first reading after calibration
+                if (!baselineCaptured) {
+                    baselineRef.current = { beta, gamma };
+                    baselineCaptured = true;
+                    return;
                 }
 
-                // Update position
-                positionRef.current.x += velocityRef.current.x * sensitivity;
-                positionRef.current.y += velocityRef.current.y * sensitivity;
-                positionRef.current.z += velocityRef.current.z * sensitivity;
+                // Calculate delta from baseline
+                const deltaBeta = beta - baselineRef.current.beta;
+                const deltaGamma = gamma - baselineRef.current.gamma;
 
-                // Clamp position
-                positionRef.current.x = Math.max(-maxPosition, Math.min(maxPosition, positionRef.current.x));
-                positionRef.current.y = Math.max(-maxPosition, Math.min(maxPosition, positionRef.current.y));
-                positionRef.current.z = Math.max(0, Math.min(maxPosition, positionRef.current.z)); // Z only forward
+                // Map gamma to X (left/right tilt)
+                // Phone tilted left = negative gamma = move left
+                let x = deltaGamma / maxTiltX;
+                x = Math.max(-1, Math.min(1, x));
+
+                // Map beta to Y and Z
+                // For Y: small tilts = up/down
+                // For Z: larger forward tilt = push forward (reveal clouds)
+
+                // Y is for small vertical adjustments
+                let y = -deltaBeta / maxTiltY; // Negative because tilt forward should go up
+                y = Math.max(-1, Math.min(1, y));
+
+                // Z is based on forward tilt (positive beta = tilted toward screen)
+                // User starts with phone flat, tilts toward screen to reveal
+                let z = deltaBeta / maxPushZ;
+                z = Math.max(0, Math.min(1, z)); // Z only goes forward (0 to 1)
+
+                // Spring-back effect: if at edge, gradually pull toward center
+                const springStrength = 0.02;
+                const edgeThreshold = 0.95;
+
+                if (Math.abs(x) > edgeThreshold) {
+                    x *= (1 - springStrength);
+                }
+                if (Math.abs(y) > edgeThreshold) {
+                    y *= (1 - springStrength);
+                }
 
                 // Update local state for visualization
-                setWandPosition({ ...positionRef.current });
+                setWandPosition({ x, y, z });
 
                 // Send to desktop
                 connRef.current?.send({
                     type: 'WAND_POSITION',
-                    payload: {
-                        x: positionRef.current.x,
-                        y: positionRef.current.y,
-                        z: positionRef.current.z,
-                        calibrated: true
-                    }
+                    payload: { x, y, z, calibrated: true }
                 });
             };
 
-            window.addEventListener('devicemotion', handleMotion);
-            return () => window.removeEventListener('devicemotion', handleMotion);
+            window.addEventListener('deviceorientation', handleOrientation);
+            return () => window.removeEventListener('deviceorientation', handleOrientation);
         }, [calibrationState, isConnected]);
 
         // Request iOS permission if needed
         const requestPermission = async () => {
-            if (typeof DeviceMotionEvent !== 'undefined' &&
-                typeof (DeviceMotionEvent as any).requestPermission === 'function') {
+            if (typeof DeviceOrientationEvent !== 'undefined' &&
+                typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
                 try {
-                    const response = await (DeviceMotionEvent as any).requestPermission();
+                    const response = await (DeviceOrientationEvent as any).requestPermission();
                     if (response === 'granted') {
                         startCalibration();
                     }
@@ -680,11 +678,11 @@ function MobileControllerContent() {
         };
 
         return (
-            <div className="h-full w-full bg-gradient-to-b from-blue-950 to-gray-900 text-white font-mono flex flex-col touch-none select-none overflow-hidden">
+            <div className="h-full w-full bg-gradient-to-b from-sky-900 via-blue-950 to-gray-900 text-white font-mono flex flex-col touch-none select-none overflow-hidden">
                 {/* Header */}
-                <div className="p-4 flex justify-between items-center">
-                    <h1 className="text-lg font-bold text-blue-300">CLOUD_WAND</h1>
-                    <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+                <div className="p-4 flex justify-between items-center border-b border-white/10">
+                    <h1 className="text-lg font-bold text-sky-300">☁️ CLOUD WAND</h1>
+                    <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-500'}`} />
                 </div>
 
                 {/* Main Content */}
@@ -692,23 +690,25 @@ function MobileControllerContent() {
                     {/* Waiting State */}
                     {calibrationState === 'waiting' && (
                         <div className="text-center space-y-6">
-                            <div className="text-6xl">☁️</div>
-                            <h2 className="text-xl font-bold text-blue-200">Position Your Phone</h2>
-                            <p className="text-sm text-blue-400/70 max-w-[250px]">
-                                Hold phone flat at arm's length, facing the screen.
+                            <div className="text-7xl">☁️</div>
+                            <h2 className="text-xl font-bold text-sky-200">Position Your Phone</h2>
+                            <p className="text-sm text-sky-400/70 max-w-[260px] leading-relaxed">
+                                Hold phone <strong>flat</strong> in front of you, screen facing up,
+                                at arm's length toward the screen.
                             </p>
-                            <div className="w-32 h-20 border-2 border-dashed border-blue-500/50 rounded-lg flex items-center justify-center mx-auto">
-                                <span className="text-2xl">📱</span>
+                            <div className="relative w-40 h-24 border-2 border-dashed border-sky-500/50 rounded-lg flex items-center justify-center mx-auto">
+                                <span className="text-3xl">📱</span>
+                                <div className="absolute -bottom-8 text-[10px] text-sky-500/60">SCREEN UP · FACING MONITOR</div>
                             </div>
                             <button
                                 onClick={requestPermission}
                                 disabled={!isConnected}
-                                className={`px-8 py-4 rounded-xl font-bold text-lg transition-all ${isConnected
-                                        ? 'bg-blue-500 hover:bg-blue-400 active:scale-95'
+                                className={`mt-4 px-10 py-4 rounded-xl font-bold text-lg transition-all shadow-lg ${isConnected
+                                        ? 'bg-sky-500 hover:bg-sky-400 active:scale-95 shadow-sky-500/30'
                                         : 'bg-gray-600 cursor-not-allowed'
                                     }`}
                             >
-                                {isConnected ? 'CALIBRATE' : 'WAITING FOR CONNECTION'}
+                                {isConnected ? 'START CALIBRATION' : 'WAITING FOR CONNECTION'}
                             </button>
                         </div>
                     )}
@@ -716,63 +716,75 @@ function MobileControllerContent() {
                     {/* Countdown State */}
                     {calibrationState === 'countdown' && (
                         <div className="text-center space-y-4">
-                            <p className="text-sm text-blue-400 uppercase tracking-widest">Hold Still</p>
-                            <div className="text-9xl font-bold text-blue-300 animate-pulse">
+                            <p className="text-sm text-sky-400 uppercase tracking-[0.3em]">Hold Perfectly Still</p>
+                            <div className="text-[10rem] font-bold text-sky-300 leading-none animate-pulse">
                                 {countdown}
                             </div>
-                            <p className="text-xs text-blue-500/70">Calibrating sensors...</p>
+                            <p className="text-xs text-sky-500/70">Capturing baseline orientation...</p>
                         </div>
                     )}
 
                     {/* Active Wand Mode */}
                     {calibrationState === 'active' && (
                         <div className="relative w-full h-full flex flex-col items-center justify-center">
-                            {/* Wand Visualization */}
-                            <div className="relative w-48 h-48">
-                                {/* Outer ring */}
-                                <div className="absolute inset-0 border-2 border-blue-500/30 rounded-full" />
+                            {/* Wand Visualization - 2D top-down view */}
+                            <div className="relative w-56 h-56 mb-4">
+                                {/* Outer boundary */}
+                                <div className="absolute inset-0 border-2 border-sky-500/30 rounded-2xl bg-sky-900/20" />
 
-                                {/* Position indicator */}
-                                <div
-                                    className="absolute w-6 h-6 bg-blue-400 rounded-full shadow-[0_0_20px_#3b82f6] transition-transform duration-75"
-                                    style={{
-                                        left: `calc(50% + ${wandPosition.x * 80}px - 12px)`,
-                                        top: `calc(50% - ${wandPosition.y * 80}px - 12px)`,
-                                        transform: `scale(${1 + wandPosition.z * 0.5})`,
-                                    }}
-                                />
-
-                                {/* Center crosshair */}
+                                {/* Grid lines */}
                                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                    <div className="w-px h-8 bg-blue-500/30" />
-                                    <div className="absolute w-8 h-px bg-blue-500/30" />
+                                    <div className="w-full h-px bg-sky-500/20" />
+                                    <div className="absolute w-px h-full bg-sky-500/20" />
+                                </div>
+
+                                {/* Quadrant labels */}
+                                <div className="absolute top-2 left-1/2 -translate-x-1/2 text-[9px] text-sky-500/50">FORWARD</div>
+                                <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[9px] text-sky-500/50">BACK</div>
+                                <div className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] text-sky-500/50">L</div>
+                                <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-sky-500/50">R</div>
+
+                                {/* Position indicator with glow */}
+                                <div
+                                    className="absolute w-8 h-8 bg-sky-400 rounded-full shadow-[0_0_30px_#38bdf8,0_0_60px_#38bdf8] transition-all duration-100 flex items-center justify-center"
+                                    style={{
+                                        left: `calc(50% + ${wandPosition.x * 100}px - 16px)`,
+                                        top: `calc(50% - ${wandPosition.y * 100}px - 16px)`,
+                                        transform: `scale(${1 + wandPosition.z * 0.8})`,
+                                        opacity: 0.8 + wandPosition.z * 0.2,
+                                    }}
+                                >
+                                    <div className="w-2 h-2 bg-white rounded-full" />
                                 </div>
                             </div>
 
                             {/* Z Depth Bar */}
-                            <div className="mt-8 w-48 space-y-1">
-                                <div className="flex justify-between text-[10px] text-blue-400/70">
-                                    <span>DEPTH</span>
-                                    <span>{(wandPosition.z * 100).toFixed(0)}%</span>
+                            <div className="w-56 space-y-2 mt-4">
+                                <div className="flex justify-between text-[11px] text-sky-400/80">
+                                    <span>REVEAL DEPTH</span>
+                                    <span className="font-bold">{(wandPosition.z * 100).toFixed(0)}%</span>
                                 </div>
-                                <div className="h-2 bg-blue-900/50 rounded-full overflow-hidden">
+                                <div className="h-3 bg-sky-900/50 rounded-full overflow-hidden border border-sky-500/20">
                                     <div
-                                        className="h-full bg-gradient-to-r from-blue-600 to-blue-400 transition-all duration-75"
-                                        style={{ width: `${wandPosition.z * 100}%` }}
+                                        className="h-full bg-gradient-to-r from-sky-600 via-sky-400 to-white transition-all duration-100 rounded-full"
+                                        style={{ width: `${Math.max(5, wandPosition.z * 100)}%` }}
                                     />
                                 </div>
+                                <p className="text-[10px] text-sky-500/50 text-center mt-1">
+                                    TILT FORWARD → REVEAL SKY
+                                </p>
                             </div>
 
-                            <p className="mt-6 text-xs text-blue-400/50 text-center">
-                                MOVE TO PART CLOUDS · PUSH FORWARD TO REVEAL
+                            <p className="mt-8 text-xs text-sky-400/60 text-center max-w-[200px]">
+                                Tilt phone to explore · Lean forward to part clouds
                             </p>
                         </div>
                     )}
                 </div>
 
                 {/* Footer */}
-                <div className="p-3 bg-blue-950/50 text-[10px] text-center text-blue-500/50">
-                    {calibrationState === 'active' ? 'WAND ACTIVE · MOVE FREELY' : 'TOUCH THE CLOUDS · v07'}
+                <div className="p-3 bg-black/30 text-[10px] text-center text-sky-500/50 border-t border-white/5">
+                    {calibrationState === 'active' ? 'WAND ACTIVE · TILT TO CONTROL' : 'TOUCH THE CLOUDS · v07'}
                 </div>
             </div>
         );

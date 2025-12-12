@@ -146,6 +146,26 @@ export default function Lobby() {
               </p>
             </motion.div>
           </Link>
+
+          {/* Experiment 07 */}
+          <Link href="/experiments/touch-clouds">
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 1.0 }}
+              whileHover={{ scale: 1.02 }}
+              className="group border border-blue-500/30 bg-blue-900/20 hover:bg-blue-800/30 p-6 rounded-xl text-left transition-all cursor-pointer relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                <span className="text-xs bg-blue-500 text-white px-2 py-1 rounded-full font-bold">NEW</span>
+              </div>
+              <h2 className="text-2xl font-bold text-blue-200 mb-2">07. Touch the Clouds</h2>
+              <p className="text-blue-300/70 text-sm">
+                Spatial Interaction.
+                Part volumetric clouds with your phone as a magic wand.
+              </p>
+            </motion.div>
+          </Link>
         </div>
       </div>
 

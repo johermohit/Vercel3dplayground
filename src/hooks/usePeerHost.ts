@@ -56,6 +56,10 @@ export function usePeerHost() {
                                 setClayFrame(data.payload);
                             });
                         }
+                        if (data.type === 'WAND_POSITION') {
+                            // Store wand position for cloud experiment
+                            useConnectionStore.getState().setSensorData({ wand: data.payload });
+                        }
                     });
 
                     conn.on('close', () => {

@@ -552,6 +552,232 @@ function MobileControllerContent() {
         );
     }
 
+    // --- CLOUDS MODE (Touch the Clouds) ---
+    if (modeParam === 'clouds') {
+        const [calibrationState, setCalibrationState] = useState<'waiting' | 'countdown' | 'active'>('waiting');
+        const [countdown, setCountdown] = useState(5);
+        const [wandPosition, setWandPosition] = useState({ x: 0, y: 0, z: 0 });
+
+        // Velocity and position tracking for sensor fusion
+        const velocityRef = useRef({ x: 0, y: 0, z: 0 });
+        const positionRef = useRef({ x: 0, y: 0, z: 0 });
+        const lastTimeRef = useRef(0);
+        const gravityRef = useRef({ x: 0, y: 0, z: 9.8 });
+
+        // Start calibration countdown
+        const startCalibration = () => {
+            setCalibrationState('countdown');
+            setCountdown(5);
+        };
+
+        // Countdown effect
+        useEffect(() => {
+            if (calibrationState !== 'countdown') return;
+
+            if (countdown > 0) {
+                const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+                return () => clearTimeout(timer);
+            } else {
+                // Calibration complete - capture gravity baseline
+                setCalibrationState('active');
+                positionRef.current = { x: 0, y: 0, z: 0 };
+                velocityRef.current = { x: 0, y: 0, z: 0 };
+
+                // Send calibrated state
+                if (connRef.current && connRef.current.open) {
+                    connRef.current.send({
+                        type: 'WAND_POSITION',
+                        payload: { x: 0, y: 0, z: 0, calibrated: true }
+                    });
+                }
+            }
+        }, [calibrationState, countdown]);
+
+        // Sensor fusion - process accelerometer and gyro data
+        useEffect(() => {
+            if (calibrationState !== 'active') return;
+            if (!connRef.current || !connRef.current.open) return;
+
+            let animationId: number;
+            const damping = 0.92; // Velocity damping to reduce drift
+            const sensitivity = 0.002; // Position sensitivity
+            const maxPosition = 1.0; // Clamp to -1 to 1
+
+            const handleMotion = (e: DeviceMotionEvent) => {
+                const now = performance.now();
+                const dt = lastTimeRef.current ? (now - lastTimeRef.current) / 1000 : 0.016;
+                lastTimeRef.current = now;
+
+                if (!e.accelerationIncludingGravity) return;
+
+                const ax = e.accelerationIncludingGravity.x || 0;
+                const ay = e.accelerationIncludingGravity.y || 0;
+                const az = e.accelerationIncludingGravity.z || 0;
+
+                // Subtract estimated gravity (phone flat = z points up = -9.8)
+                // When phone tilts, distribute gravity across axes
+                const netX = ax;
+                const netY = ay;
+                const netZ = az - 9.8; // Subtract gravity for forward/back movement
+
+                // Update velocity with damping
+                velocityRef.current.x = (velocityRef.current.x + netX * dt) * damping;
+                velocityRef.current.y = (velocityRef.current.y + netY * dt) * damping;
+                velocityRef.current.z = (velocityRef.current.z + netZ * dt) * damping;
+
+                // Stillness detection - reset velocity when nearly still
+                const accelMag = Math.sqrt(ax * ax + ay * ay + az * az);
+                if (Math.abs(accelMag - 9.8) < 0.5) {
+                    velocityRef.current.x *= 0.8;
+                    velocityRef.current.y *= 0.8;
+                    velocityRef.current.z *= 0.8;
+                }
+
+                // Update position
+                positionRef.current.x += velocityRef.current.x * sensitivity;
+                positionRef.current.y += velocityRef.current.y * sensitivity;
+                positionRef.current.z += velocityRef.current.z * sensitivity;
+
+                // Clamp position
+                positionRef.current.x = Math.max(-maxPosition, Math.min(maxPosition, positionRef.current.x));
+                positionRef.current.y = Math.max(-maxPosition, Math.min(maxPosition, positionRef.current.y));
+                positionRef.current.z = Math.max(0, Math.min(maxPosition, positionRef.current.z)); // Z only forward
+
+                // Update local state for visualization
+                setWandPosition({ ...positionRef.current });
+
+                // Send to desktop
+                connRef.current?.send({
+                    type: 'WAND_POSITION',
+                    payload: {
+                        x: positionRef.current.x,
+                        y: positionRef.current.y,
+                        z: positionRef.current.z,
+                        calibrated: true
+                    }
+                });
+            };
+
+            window.addEventListener('devicemotion', handleMotion);
+            return () => window.removeEventListener('devicemotion', handleMotion);
+        }, [calibrationState, isConnected]);
+
+        // Request iOS permission if needed
+        const requestPermission = async () => {
+            if (typeof DeviceMotionEvent !== 'undefined' &&
+                typeof (DeviceMotionEvent as any).requestPermission === 'function') {
+                try {
+                    const response = await (DeviceMotionEvent as any).requestPermission();
+                    if (response === 'granted') {
+                        startCalibration();
+                    }
+                } catch (e) {
+                    console.error('Permission denied:', e);
+                }
+            } else {
+                startCalibration();
+            }
+        };
+
+        return (
+            <div className="h-full w-full bg-gradient-to-b from-blue-950 to-gray-900 text-white font-mono flex flex-col touch-none select-none overflow-hidden">
+                {/* Header */}
+                <div className="p-4 flex justify-between items-center">
+                    <h1 className="text-lg font-bold text-blue-300">CLOUD_WAND</h1>
+                    <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+                </div>
+
+                {/* Main Content */}
+                <div className="flex-1 flex flex-col items-center justify-center p-6">
+                    {/* Waiting State */}
+                    {calibrationState === 'waiting' && (
+                        <div className="text-center space-y-6">
+                            <div className="text-6xl">☁️</div>
+                            <h2 className="text-xl font-bold text-blue-200">Position Your Phone</h2>
+                            <p className="text-sm text-blue-400/70 max-w-[250px]">
+                                Hold phone flat at arm's length, facing the screen.
+                            </p>
+                            <div className="w-32 h-20 border-2 border-dashed border-blue-500/50 rounded-lg flex items-center justify-center mx-auto">
+                                <span className="text-2xl">📱</span>
+                            </div>
+                            <button
+                                onClick={requestPermission}
+                                disabled={!isConnected}
+                                className={`px-8 py-4 rounded-xl font-bold text-lg transition-all ${isConnected
+                                        ? 'bg-blue-500 hover:bg-blue-400 active:scale-95'
+                                        : 'bg-gray-600 cursor-not-allowed'
+                                    }`}
+                            >
+                                {isConnected ? 'CALIBRATE' : 'WAITING FOR CONNECTION'}
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Countdown State */}
+                    {calibrationState === 'countdown' && (
+                        <div className="text-center space-y-4">
+                            <p className="text-sm text-blue-400 uppercase tracking-widest">Hold Still</p>
+                            <div className="text-9xl font-bold text-blue-300 animate-pulse">
+                                {countdown}
+                            </div>
+                            <p className="text-xs text-blue-500/70">Calibrating sensors...</p>
+                        </div>
+                    )}
+
+                    {/* Active Wand Mode */}
+                    {calibrationState === 'active' && (
+                        <div className="relative w-full h-full flex flex-col items-center justify-center">
+                            {/* Wand Visualization */}
+                            <div className="relative w-48 h-48">
+                                {/* Outer ring */}
+                                <div className="absolute inset-0 border-2 border-blue-500/30 rounded-full" />
+
+                                {/* Position indicator */}
+                                <div
+                                    className="absolute w-6 h-6 bg-blue-400 rounded-full shadow-[0_0_20px_#3b82f6] transition-transform duration-75"
+                                    style={{
+                                        left: `calc(50% + ${wandPosition.x * 80}px - 12px)`,
+                                        top: `calc(50% - ${wandPosition.y * 80}px - 12px)`,
+                                        transform: `scale(${1 + wandPosition.z * 0.5})`,
+                                    }}
+                                />
+
+                                {/* Center crosshair */}
+                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                    <div className="w-px h-8 bg-blue-500/30" />
+                                    <div className="absolute w-8 h-px bg-blue-500/30" />
+                                </div>
+                            </div>
+
+                            {/* Z Depth Bar */}
+                            <div className="mt-8 w-48 space-y-1">
+                                <div className="flex justify-between text-[10px] text-blue-400/70">
+                                    <span>DEPTH</span>
+                                    <span>{(wandPosition.z * 100).toFixed(0)}%</span>
+                                </div>
+                                <div className="h-2 bg-blue-900/50 rounded-full overflow-hidden">
+                                    <div
+                                        className="h-full bg-gradient-to-r from-blue-600 to-blue-400 transition-all duration-75"
+                                        style={{ width: `${wandPosition.z * 100}%` }}
+                                    />
+                                </div>
+                            </div>
+
+                            <p className="mt-6 text-xs text-blue-400/50 text-center">
+                                MOVE TO PART CLOUDS · PUSH FORWARD TO REVEAL
+                            </p>
+                        </div>
+                    )}
+                </div>
+
+                {/* Footer */}
+                <div className="p-3 bg-blue-950/50 text-[10px] text-center text-blue-500/50">
+                    {calibrationState === 'active' ? 'WAND ACTIVE · MOVE FREELY' : 'TOUCH THE CLOUDS · v07'}
+                </div>
+            </div>
+        );
+    }
+
     // Default Cube/Gravity Interface
     return (
         <div

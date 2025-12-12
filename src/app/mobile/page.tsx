@@ -555,21 +555,21 @@ function MobileControllerContent() {
     // --- CLOUDS MODE (Touch the Clouds) - Orientation-based tracking ---
     if (modeParam === 'clouds') {
         const [calibrationState, setCalibrationState] = useState<'waiting' | 'countdown' | 'active'>('waiting');
-        const [countdown, setCountdown] = useState(3);
+        const [countdown, setCountdown] = useState(5);
         const [wandPosition, setWandPosition] = useState({ x: 0, y: 0, z: 0 });
 
         // Calibration baseline (captured at end of countdown)
         const baselineRef = useRef({ beta: 0, gamma: 0 });
 
-        // MORE SENSITIVE virtual box (easier to reach edges)
-        const maxTiltX = 20; // degrees of gamma (left/right tilt)
-        const maxTiltY = 20; // degrees of beta (forward/back tilt)
-        const maxPushZ = 25; // degrees forward to reach max Z (faster reveal)
+        // Virtual box dimensions (normalized -1 to 1)
+        const maxTiltX = 30; // degrees of gamma (left/right tilt)
+        const maxTiltY = 30; // degrees of beta (forward/back tilt)
+        const maxPushZ = 40; // degrees of beta to reach max Z
 
         // Start calibration countdown
         const startCalibration = () => {
             setCalibrationState('countdown');
-            setCountdown(3); // Faster 3 second calibration
+            setCountdown(5);
         };
 
         // Countdown effect
@@ -704,8 +704,8 @@ function MobileControllerContent() {
                                 onClick={requestPermission}
                                 disabled={!isConnected}
                                 className={`mt-4 px-10 py-4 rounded-xl font-bold text-lg transition-all shadow-lg ${isConnected
-                                    ? 'bg-sky-500 hover:bg-sky-400 active:scale-95 shadow-sky-500/30'
-                                    : 'bg-gray-600 cursor-not-allowed'
+                                        ? 'bg-sky-500 hover:bg-sky-400 active:scale-95 shadow-sky-500/30'
+                                        : 'bg-gray-600 cursor-not-allowed'
                                     }`}
                             >
                                 {isConnected ? 'START CALIBRATION' : 'WAITING FOR CONNECTION'}

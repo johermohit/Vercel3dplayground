@@ -76,6 +76,15 @@ const experiments = [
     tag: "TEST",
     tagColor: "bg-yellow-500 text-black",
   },
+  {
+    id: "09",
+    name: "Make a Wish",
+    href: "/experiments/make-a-wish",
+    desc: "Blow on a dandelion and watch your wish fly away",
+    color: "green",
+    tag: "NEW",
+    tagColor: "bg-green-500 text-white",
+  },
 ];
 
 const colorMap: Record<string, { border: string; bg: string; hover: string; text: string; desc: string }> = {
@@ -86,6 +95,7 @@ const colorMap: Record<string, { border: string; bg: string; hover: string; text
   purple: { border: "border-purple-500/30", bg: "bg-purple-900/20", hover: "hover:bg-purple-800/40", text: "text-purple-300", desc: "text-purple-400/70" },
   blue: { border: "border-blue-500/30", bg: "bg-blue-900/20", hover: "hover:bg-blue-800/40", text: "text-blue-300", desc: "text-blue-400/70" },
   cyan: { border: "border-cyan-500/30", bg: "bg-cyan-900/20", hover: "hover:bg-cyan-800/40", text: "text-cyan-300", desc: "text-cyan-400/70" },
+  green: { border: "border-green-500/30", bg: "bg-green-900/20", hover: "hover:bg-green-800/40", text: "text-green-300", desc: "text-green-400/70" },
 };
 
 export default function Lobby() {

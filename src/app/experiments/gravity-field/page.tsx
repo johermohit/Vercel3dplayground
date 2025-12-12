@@ -4,7 +4,7 @@ import React from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { QROverlay } from "@/components/QROverlay";
+import QROverlay from "@/components/QROverlay";
 
 const GravityScene = dynamic(() => import("@/components/experiments/GravityScene"), { ssr: false });
 

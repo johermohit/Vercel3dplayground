@@ -3,7 +3,7 @@
 import React, { Suspense, useRef, useMemo } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { Canvas, useFrame, extend } from "@react-three/fiber";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, Environment, shaderMaterial } from "@react-three/drei";
 import * as THREE from "three";
 import { usePeerHost } from "@/hooks/usePeerHost";
@@ -132,21 +132,14 @@ const AuraFieldMaterial = shaderMaterial(
     `
 );
 
-// Extend Three.js with our custom material
-extend({ AuraFieldMaterial });
-
-// TypeScript declaration for the custom material
-declare global {
-    namespace JSX {
-        interface IntrinsicElements {
-            auraFieldMaterial: any;
-        }
-    }
-}
+// AuraFieldMaterial is used directly with primitive element
 
 function AuraField() {
-    const materialRef = useRef<any>(null);
+    const materialRef = useRef<THREE.ShaderMaterial>(null);
     const frameCount = useRef(0);
+
+    // Create material instance with useMemo
+    const material = useMemo(() => new AuraFieldMaterial(), []);
 
     // Smoothed values for interpolation
     const smoothed = useRef({
@@ -194,18 +187,19 @@ function AuraField() {
         smoothed.current.touchForce += (targetTouchForce - smoothed.current.touchForce) * 0.2;
 
         // Update shader uniforms
-        materialRef.current.uTime = state.clock.elapsedTime;
-        materialRef.current.uAlpha = smoothed.current.alpha;
-        materialRef.current.uBeta = smoothed.current.beta;
-        materialRef.current.uGamma = smoothed.current.gamma;
-        materialRef.current.uShake = smoothed.current.shake;
-        materialRef.current.uTouchForce = smoothed.current.touchForce;
+        const mat = materialRef.current as any;
+        mat.uTime = state.clock.elapsedTime;
+        mat.uAlpha = smoothed.current.alpha;
+        mat.uBeta = smoothed.current.beta;
+        mat.uGamma = smoothed.current.gamma;
+        mat.uShake = smoothed.current.shake;
+        mat.uTouchForce = smoothed.current.touchForce;
     });
 
     return (
         <mesh rotation={[0, 0, 0]}>
             <planeGeometry args={[10, 10]} />
-            <auraFieldMaterial ref={materialRef} />
+            <primitive object={material} ref={materialRef} attach="material" />
         </mesh>
     );
 }

@@ -126,6 +126,26 @@ export default function Lobby() {
               </p>
             </motion.div>
           </Link>
+
+          {/* Experiment 06 */}
+          <Link href="/experiments/aura-field">
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.9 }}
+              whileHover={{ scale: 1.02 }}
+              className="group border border-purple-500/30 bg-purple-900/20 hover:bg-purple-800/30 p-6 rounded-xl text-left transition-all cursor-pointer relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                <span className="text-xs bg-purple-500 text-white px-2 py-1 rounded-full font-bold">NEW</span>
+              </div>
+              <h2 className="text-2xl font-bold text-purple-200 mb-2">06. Aura Field</h2>
+              <p className="text-purple-300/70 text-sm">
+                Shader-Driven Energy.
+                Control an ethereal plasma field with your phone's sensors.
+              </p>
+            </motion.div>
+          </Link>
         </div>
       </div>
 

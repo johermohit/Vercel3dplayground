@@ -9,13 +9,11 @@ import { usePeerHost } from "@/hooks/usePeerHost";
 import { useConnectionStore } from "@/store/connectionStore";
 import QROverlay from "@/components/QROverlay";
 
-// Fluffy Cloud Shader - Cotton-like volumetric appearance
-const CloudMaterial = shaderMaterial(
+// Skydiver Scene Shader - Layered with depth
+const SkydiverMaterial = shaderMaterial(
     {
         uTime: 0,
-        uWandX: 0,
-        uWandY: 0,
-        uWandZ: 0,
+        uDepth: 0, // 0 = in clouds, 1 = through clouds, seeing earth
     },
     // Vertex Shader
     `
@@ -25,155 +23,206 @@ const CloudMaterial = shaderMaterial(
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }
     `,
-    // Fragment Shader - Fluffy Cotton Clouds
+    // Fragment Shader - Skydiver POV
     `
     uniform float uTime;
-    uniform float uWandX;
-    uniform float uWandY;
-    uniform float uWandZ;
+    uniform float uDepth;
     
     varying vec2 vUv;
     
-    // Better hash for smoother noise
-    vec3 hash33(vec3 p3) {
-        p3 = fract(p3 * vec3(.1031, .1030, .0973));
-        p3 += dot(p3, p3.yxz + 33.33);
-        return fract((p3.xxy + p3.yxx) * p3.zyx);
+    // Hash functions
+    float hash(vec2 p) {
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
     }
     
-    // 3D Value noise for volumetric feel
+    float hash3(vec3 p) {
+        return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+    }
+    
+    // 2D noise
+    float noise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        
+        float a = hash(i);
+        float b = hash(i + vec2(1.0, 0.0));
+        float c = hash(i + vec2(0.0, 1.0));
+        float d = hash(i + vec2(1.0, 1.0));
+        
+        return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+    }
+    
+    // 3D noise for volumetric clouds
     float noise3D(vec3 p) {
         vec3 i = floor(p);
         vec3 f = fract(p);
-        f = f * f * (3.0 - 2.0 * f); // Smoothstep
+        f = f * f * (3.0 - 2.0 * f);
         
-        float n = i.x + i.y * 157.0 + i.z * 113.0;
-        
-        vec4 s1 = vec4(
-            fract(sin(n) * 43758.5453),
-            fract(sin(n + 1.0) * 43758.5453),
-            fract(sin(n + 157.0) * 43758.5453),
-            fract(sin(n + 158.0) * 43758.5453)
-        );
-        vec4 s2 = vec4(
-            fract(sin(n + 113.0) * 43758.5453),
-            fract(sin(n + 114.0) * 43758.5453),
-            fract(sin(n + 270.0) * 43758.5453),
-            fract(sin(n + 271.0) * 43758.5453)
-        );
-        
-        vec4 m = mix(s1, s2, f.z);
-        vec2 m2 = mix(m.xy, m.zw, f.y);
-        return mix(m2.x, m2.y, f.x);
+        float n = hash3(i) * (1.0 - f.x) * (1.0 - f.y) * (1.0 - f.z)
+                + hash3(i + vec3(1,0,0)) * f.x * (1.0 - f.y) * (1.0 - f.z)
+                + hash3(i + vec3(0,1,0)) * (1.0 - f.x) * f.y * (1.0 - f.z)
+                + hash3(i + vec3(1,1,0)) * f.x * f.y * (1.0 - f.z)
+                + hash3(i + vec3(0,0,1)) * (1.0 - f.x) * (1.0 - f.y) * f.z
+                + hash3(i + vec3(1,0,1)) * f.x * (1.0 - f.y) * f.z
+                + hash3(i + vec3(0,1,1)) * (1.0 - f.x) * f.y * f.z
+                + hash3(i + vec3(1,1,1)) * f.x * f.y * f.z;
+        return n;
     }
     
-    // FBM with 3D noise for fluffy effect
-    float fbmCloud(vec3 p) {
+    // FBM for clouds
+    float fbm(vec3 p) {
         float value = 0.0;
         float amplitude = 0.5;
-        float frequency = 1.0;
-        
-        for(int i = 0; i < 6; i++) {
-            value += amplitude * noise3D(p * frequency);
+        for(int i = 0; i < 5; i++) {
+            value += amplitude * noise3D(p);
             amplitude *= 0.5;
-            frequency *= 2.0;
+            p *= 2.0;
         }
         return value;
     }
     
-    // Cloud density function - creates puffy shapes
-    float cloudDensity(vec3 p, float t) {
-        // Base cloud shape
-        float cloud = fbmCloud(p * 2.0 + vec3(t * 0.1, 0.0, t * 0.05));
-        
-        // Add billowy puffs
-        float puffs = fbmCloud(p * 4.0 - vec3(t * 0.2, t * 0.1, 0.0)) * 0.5;
-        
-        // Combine for cotton-like effect
-        cloud = cloud * 0.7 + puffs * 0.3;
-        
-        // Threshold to create defined edges
-        cloud = smoothstep(0.3, 0.7, cloud);
-        
-        return cloud;
+    // FBM for terrain
+    float fbmTerrain(vec2 p) {
+        float value = 0.0;
+        float amplitude = 0.5;
+        for(int i = 0; i < 6; i++) {
+            value += amplitude * noise(p);
+            amplitude *= 0.5;
+            p *= 2.0;
+        }
+        return value;
     }
     
     void main() {
         vec2 uv = vUv;
-        float t = uTime;
+        float t = uTime * 0.05;
         
-        // Wand position affects viewing direction
-        vec2 wandOffset = vec2(uWandX, uWandY) * 0.5;
-        vec2 shiftedUv = uv - 0.5 + wandOffset;
+        // === LAYER 1: SKY GRADIENT + SUNSET ===
+        // Horizon at bottom, sky at top
+        float horizon = 0.25; // Where earth meets sky
         
-        // Z controls depth/reveal - starts at 1 (full clouds), goes to 0 (revealed)
-        float depth = 1.0 - uWandZ; // Invert: push forward = reveal
+        // Sky gradient (top to horizon)
+        vec3 skyTop = vec3(0.15, 0.35, 0.65);    // Deep blue
+        vec3 skyHorizon = vec3(0.5, 0.7, 0.9);   // Light blue at horizon
         
-        // Create 3D position for volumetric sampling
-        vec3 cloudPos = vec3(shiftedUv * 3.0, depth * 2.0);
+        // Sunset colors (on left side)
+        vec3 sunsetOrange = vec3(1.0, 0.5, 0.2);
+        vec3 sunsetPink = vec3(1.0, 0.6, 0.7);
+        vec3 sunsetPurple = vec3(0.6, 0.3, 0.5);
         
-        // Sample multiple cloud layers for depth
-        float layer1 = cloudDensity(cloudPos, t);
-        float layer2 = cloudDensity(cloudPos + vec3(0.5, 0.3, 0.8), t * 0.8) * 0.7;
-        float layer3 = cloudDensity(cloudPos + vec3(-0.3, 0.7, 1.5), t * 0.6) * 0.5;
+        // Sunset position and influence
+        float sunsetX = 0.15; // Left side
+        float sunDist = length(vec2(uv.x - sunsetX, (uv.y - horizon) * 2.0));
+        float sunGlow = smoothstep(0.6, 0.0, sunDist);
         
-        // Combine layers with depth-based visibility
-        float combinedCloud = layer1 + layer2 * depth + layer3 * depth * depth;
-        combinedCloud = clamp(combinedCloud, 0.0, 1.0);
+        // Mix sky with sunset
+        vec3 skyColor = mix(skyTop, skyHorizon, smoothstep(1.0, horizon, uv.y));
+        skyColor = mix(skyColor, sunsetOrange, sunGlow * 0.8);
+        skyColor = mix(skyColor, sunsetPink, sunGlow * 0.4 * smoothstep(0.3, 0.0, sunDist));
         
-        // Apply reveal mask based on distance from center
-        float distFromCenter = length(shiftedUv);
-        float revealMask = smoothstep(0.0, 0.5 + depth * 0.5, distFromCenter);
+        // Sun disc
+        float sunDisc = smoothstep(0.08, 0.05, sunDist);
+        skyColor = mix(skyColor, vec3(1.0, 0.95, 0.8), sunDisc);
         
-        // When Z is high (pushed forward), center reveals
-        float centerReveal = (1.0 - depth) * (1.0 - smoothstep(0.0, 0.4, distFromCenter));
-        combinedCloud *= mix(1.0, revealMask, centerReveal);
+        // === LAYER 2: EARTH/TERRAIN (below horizon) ===
+        // Only visible when depth > 0 (pushed through clouds)
         
-        // Cloud colors - soft, fluffy white with subtle variation
-        vec3 cloudWhite = vec3(0.98, 0.98, 1.0);
+        vec3 terrainColor = vec3(0.0);
+        if (uv.y < horizon + 0.1) {
+            // Terrain perspective (looking down as skydiver)
+            vec2 terrainUV = vec2(uv.x, (horizon - uv.y) * 5.0 + t * 0.5);
+            
+            // Base terrain noise (mountains, valleys)
+            float terrainHeight = fbmTerrain(terrainUV * 8.0);
+            
+            // Patchwork fields (green/brown/yellow)
+            float fields = noise(terrainUV * 30.0);
+            vec3 fieldGreen = vec3(0.2, 0.4, 0.15);
+            vec3 fieldYellow = vec3(0.5, 0.45, 0.2);
+            vec3 fieldBrown = vec3(0.35, 0.25, 0.15);
+            
+            vec3 fieldColor = mix(fieldGreen, fieldYellow, step(0.5, fields));
+            fieldColor = mix(fieldColor, fieldBrown, step(0.75, fields));
+            
+            // Mountains (grayish at high terrain)
+            vec3 mountainColor = vec3(0.4, 0.38, 0.35);
+            terrainColor = mix(fieldColor, mountainColor, smoothstep(0.5, 0.8, terrainHeight));
+            
+            // Add some "city" dots (scattered bright spots)
+            float cityNoise = noise(terrainUV * 100.0);
+            float cityMask = step(0.92, cityNoise) * step(0.7, 1.0 - terrainHeight);
+            terrainColor = mix(terrainColor, vec3(0.9, 0.85, 0.7), cityMask * 0.6);
+            
+            // Rivers (blue lines)
+            float riverNoise = noise(terrainUV * 15.0 + vec2(100.0, 0.0));
+            float river = smoothstep(0.48, 0.5, riverNoise) * smoothstep(0.52, 0.5, riverNoise);
+            terrainColor = mix(terrainColor, vec3(0.2, 0.4, 0.6), river * 0.8);
+            
+            // Atmospheric haze (distance fog)
+            float distanceFog = smoothstep(0.0, horizon, uv.y);
+            terrainColor = mix(terrainColor, skyHorizon * 0.8, distanceFog * 0.7);
+        }
+        
+        // === LAYER 3: CLOUDS (interactive layer) ===
+        // Cloud density based on depth - more clouds when depth is low
+        float cloudLayer = 1.0 - uDepth; // Invert: depth 0 = full clouds, depth 1 = no clouds
+        
+        // Moving clouds
+        vec3 cloudPos = vec3(uv * 4.0, t);
+        float cloud = fbm(cloudPos);
+        float cloud2 = fbm(cloudPos + vec3(1.5, 0.5, t * 0.3));
+        
+        // Combine cloud layers
+        float cloudDensity = (cloud * 0.6 + cloud2 * 0.4);
+        cloudDensity = smoothstep(0.3, 0.7, cloudDensity);
+        
+        // Clouds are fluffy white with subtle blue shadows
+        vec3 cloudWhite = vec3(1.0, 0.99, 0.98);
         vec3 cloudShadow = vec3(0.7, 0.75, 0.85);
-        vec3 cloudHighlight = vec3(1.0, 1.0, 1.0);
+        float cloudLighting = noise3D(cloudPos * 2.0 + vec3(0, 0, t * 0.5));
+        vec3 cloudColor = mix(cloudShadow, cloudWhite, cloudLighting);
         
-        // Sky colors
-        vec3 skyBlue = vec3(0.4, 0.6, 0.95);
-        vec3 skyHorizon = vec3(0.7, 0.85, 1.0);
-        vec3 sunGlow = vec3(1.0, 0.95, 0.8);
+        // Sunset reflection on clouds
+        cloudColor = mix(cloudColor, sunsetOrange * 0.5 + vec3(0.5), sunGlow * 0.3);
         
-        // Sky gradient
-        float skyGradient = uv.y;
-        vec3 skyColor = mix(skyHorizon, skyBlue, skyGradient);
+        // === COMPOSITE ALL LAYERS ===
+        vec3 finalColor = skyColor;
         
-        // Add sun glow at top center
-        float sunDist = length(vec2(uv.x - 0.5, uv.y - 0.8));
-        skyColor += sunGlow * 0.3 * smoothstep(0.4, 0.0, sunDist);
+        // Add terrain (visible based on depth and position)
+        float terrainVisibility = smoothstep(horizon + 0.1, horizon - 0.1, uv.y) * uDepth;
+        finalColor = mix(finalColor, terrainColor, terrainVisibility);
         
-        // Cloud shading - fake volumetric lighting
-        float lighting = 0.5 + 0.5 * noise3D(cloudPos * 5.0 + t * 0.2);
-        vec3 cloudColor = mix(cloudShadow, cloudWhite, lighting);
-        cloudColor = mix(cloudColor, cloudHighlight, pow(lighting, 3.0) * 0.5);
+        // Add clouds on top (less clouds = more terrain visible)
+        float cloudVisibility = cloudDensity * cloudLayer;
         
-        // Blend cloud with sky
-        vec3 finalColor = mix(skyColor, cloudColor, combinedCloud * depth);
+        // Clouds dissolve from center when pushing forward
+        float centerDist = length(uv - 0.5);
+        float cloudHole = smoothstep(0.0, 0.5, centerDist * (1.0 + uDepth));
+        cloudVisibility *= mix(cloudHole, 1.0, 1.0 - uDepth);
         
-        // Add golden rim light where clouds meet revealed sky
-        float rimLight = centerReveal * combinedCloud * 0.5;
-        finalColor += sunGlow * rimLight;
+        finalColor = mix(finalColor, cloudColor, cloudVisibility);
         
-        // Subtle vignette
-        float vignette = 1.0 - length(uv - 0.5) * 0.3;
+        // Add slight vignette
+        float vignette = 1.0 - centerDist * 0.3;
         finalColor *= vignette;
+        
+        // Wind streaks for motion feel (subtle)
+        float windStreak = noise(vec2(uv.x * 100.0, uv.y + t * 10.0));
+        windStreak = smoothstep(0.98, 1.0, windStreak);
+        finalColor = mix(finalColor, vec3(1.0), windStreak * 0.1 * uDepth);
         
         gl_FragColor = vec4(finalColor, 1.0);
     }
     `
 );
 
-function Clouds() {
+function SkydiverScene() {
     const materialRef = useRef<THREE.ShaderMaterial>(null);
-    const material = useMemo(() => new CloudMaterial(), []);
+    const material = useMemo(() => new SkydiverMaterial(), []);
 
-    // Smoothed wand position with spring-back
-    const smoothed = useRef({ x: 0, y: 0, z: 0 });
+    // Smoothed depth
+    const smoothedDepth = useRef(0);
 
     useFrame((state) => {
         if (!materialRef.current) return;
@@ -182,23 +231,19 @@ function Clouds() {
         const { sensorData } = useConnectionStore.getState();
         const wand = sensorData.wand || { x: 0, y: 0, z: 0, calibrated: false };
 
-        // Smooth interpolation (spring-like for responsiveness)
-        const lerpFactor = 0.12;
-        smoothed.current.x += (wand.x - smoothed.current.x) * lerpFactor;
-        smoothed.current.y += (wand.y - smoothed.current.y) * lerpFactor;
-        smoothed.current.z += (wand.z - smoothed.current.z) * lerpFactor;
+        // Smooth depth interpolation
+        const targetDepth = wand.z;
+        smoothedDepth.current += (targetDepth - smoothedDepth.current) * 0.08;
 
         // Update uniforms
         const mat = materialRef.current as any;
         mat.uTime = state.clock.elapsedTime;
-        mat.uWandX = smoothed.current.x;
-        mat.uWandY = smoothed.current.y;
-        mat.uWandZ = smoothed.current.z;
+        mat.uDepth = smoothedDepth.current;
     });
 
     return (
         <mesh>
-            <planeGeometry args={[14, 14]} />
+            <planeGeometry args={[16, 12]} />
             <primitive object={material} ref={materialRef} attach="material" />
         </mesh>
     );
@@ -211,16 +256,7 @@ function SceneContent() {
 
     return (
         <>
-            <color attach="background" args={["#4a6fa5"]} />
-            <Clouds />
-
-            {/* Wand indicator - subtle glow sphere */}
-            {wand && wand.calibrated && (
-                <mesh position={[wand.x * 4, wand.y * 4, 1 + wand.z * 2]}>
-                    <sphereGeometry args={[0.08, 16, 16]} />
-                    <meshBasicMaterial color="#ffffff" transparent opacity={0.6} />
-                </mesh>
-            )}
+            <SkydiverScene />
         </>
     );
 }
@@ -236,23 +272,23 @@ export default function TouchCloudsPage() {
     };
 
     return (
-        <div className="h-full w-full bg-black text-white">
+        <div className="h-full w-full bg-black text-white overflow-hidden">
             <QROverlay mode="clouds" />
 
             {/* Header Overlay */}
-            <div className="absolute top-0 left-0 p-8 z-10 flex items-start gap-4">
+            <div className="absolute top-0 left-0 p-6 z-10 flex items-start gap-4">
                 <div className="pointer-events-none">
-                    <h1 className="text-4xl font-bold tracking-tighter text-white/60">07. TOUCH THE CLOUDS</h1>
-                    <p className="text-xs font-mono text-white/40 mt-2">
+                    <h1 className="text-3xl font-bold tracking-tighter text-white/70">07. SKYDIVE</h1>
+                    <p className="text-[10px] font-mono text-white/40 mt-1">
                         {wand?.calibrated
-                            ? "TILT PHONE TO EXPLORE · LEAN FORWARD TO REVEAL SKY"
-                            : "CONNECT PHONE · CALIBRATE · EXPLORE"
+                            ? `DEPTH: ${(wand.z * 100).toFixed(0)}% · TILT FORWARD TO DESCEND`
+                            : "CONNECT PHONE · CALIBRATE · DIVE"
                         }
                     </p>
                 </div>
                 <button
                     onClick={handleReset}
-                    className="px-4 py-2 bg-blue-600/80 hover:bg-blue-500 text-white text-xs font-mono rounded transition-colors pointer-events-auto"
+                    className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs font-mono rounded transition-colors pointer-events-auto border border-white/20"
                 >
                     RESET
                 </button>
@@ -261,17 +297,30 @@ export default function TouchCloudsPage() {
             {/* Back Button */}
             <Link
                 href="/"
-                className="absolute top-8 right-8 z-20 text-white/50 hover:text-white text-sm font-mono"
+                className="absolute top-6 right-6 z-20 text-white/40 hover:text-white text-xs font-mono"
             >
                 ← LOBBY
             </Link>
 
+            {/* Depth Indicator */}
+            {wand?.calibrated && (
+                <div className="absolute right-6 top-1/2 -translate-y-1/2 z-10 pointer-events-none">
+                    <div className="h-48 w-2 bg-white/10 rounded-full overflow-hidden">
+                        <div
+                            className="w-full bg-gradient-to-t from-green-400 to-blue-400 transition-all duration-150 rounded-full"
+                            style={{ height: `${wand.z * 100}%` }}
+                        />
+                    </div>
+                    <p className="text-[8px] text-white/40 text-center mt-1 font-mono">DEPTH</p>
+                </div>
+            )}
+
             {/* Calibration Status */}
             {!wand?.calibrated && (
-                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
-                    <div className="bg-black/70 border border-white/20 px-6 py-3 rounded-full">
-                        <p className="text-white/70 font-mono text-sm">
-                            AWAITING CALIBRATION...
+                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+                    <div className="bg-black/70 border border-white/10 px-5 py-2 rounded-full backdrop-blur-sm">
+                        <p className="text-white/60 font-mono text-xs">
+                            WAITING FOR CALIBRATION...
                         </p>
                     </div>
                 </div>

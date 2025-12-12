@@ -2,8 +2,7 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { useRef, useMemo } from "react";
 import * as THREE from "three";
 import { OrbitControls, Environment, Float, Stars } from "@react-three/drei";
-import { EffectComposer, Bloom, ChromaticAberration, Glitch, Noise } from "@react-three/postprocessing";
-import { BlendFunction } from "postprocessing";
+import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import { usePeerHost } from "@/hooks/usePeerHost";
 import { useConnectionStore } from "@/store/connectionStore";
 
@@ -43,34 +42,16 @@ function DataCore() {
 }
 
 function Effects() {
-    const { intensity, glitch } = useConnectionStore();
-    // Map intensity to aberration offset
-    const offset = new THREE.Vector2(intensity * 0.05, intensity * 0.05);
+    const { intensity } = useConnectionStore();
 
     return (
-        <EffectComposer disableNormalPass>
-            {/* Cyberpunk Glow */}
+        <EffectComposer>
+            {/* Cyberpunk Glow - only using Bloom for build stability */}
             <Bloom
-                luminanceThreshold={1}
+                luminanceThreshold={0.1}
                 mipmapBlur
-                intensity={1.5 + intensity}
-                radius={0.6}
-            />
-            {/* Digital Distortion */}
-            <ChromaticAberration
-                offset={offset}
-                radialModulation={false}
-                modulationOffset={0}
-            />
-            <Noise opacity={0.1 + (intensity * 0.2)} blendFunction={BlendFunction.OVERLAY} />
-
-            {/* Triggered Glitch */}
-            <Glitch
-                active={glitch || intensity > 0.8} // Auto glitch at high intensity
-                delay={[0.5, 1]}
-                duration={[0.1, 0.3]}
-                strength={[0.3, 1.0]}
-                ratio={0.85}
+                intensity={1.5 + intensity * 2}
+                radius={0.8}
             />
         </EffectComposer>
     );

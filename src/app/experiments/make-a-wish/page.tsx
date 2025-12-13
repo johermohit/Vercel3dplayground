@@ -22,7 +22,7 @@ interface Seed {
 function DandelionSeed({ seed }: { seed: Seed }) {
     const filaments = useMemo(() => {
         const lines: THREE.Vector3[][] = [];
-        const count = 24;
+        const count = 26;
 
         for (let i = 0; i < count; i++) {
             const angle = (i / count) * Math.PI * 2;
@@ -56,44 +56,51 @@ function DandelionSeed({ seed }: { seed: Seed }) {
                 <meshStandardMaterial color="#9a7530" roughness={0.6} />
             </mesh>
 
+            {/* Pedicel (stem) */}
             <Line
                 points={[new THREE.Vector3(0, 0.017, 0), new THREE.Vector3(0, 0.065, 0)]}
                 color="#f5f5f0"
-                lineWidth={0.15}
+                lineWidth={0.25}
                 transparent
-                opacity={seed.opacity * 0.8}
+                opacity={seed.opacity * 0.85}
             />
 
+            {/* Pappus filaments */}
             {filaments.map((line, i) => (
-                <Line key={i} points={line} color="#ffffff" lineWidth={0.15} transparent opacity={seed.opacity * 0.6} />
+                <Line key={i} points={line} color="#ffffff" lineWidth={0.22} transparent opacity={seed.opacity * 0.65} />
             ))}
         </group>
     );
 }
 
-// Sepal component - curved leaf-like structure
-function Sepal({ angle, tilt }: { angle: number; tilt: number }) {
-    const curve = useMemo(() => {
-        const points = [];
-        for (let t = 0; t <= 1; t += 0.1) {
-            const y = -t * 0.08;
-            const outward = t * 0.035 + t * t * 0.02;
-            points.push(new THREE.Vector3(outward, y, 0));
-        }
-        return new THREE.CatmullRomCurve3(points);
-    }, []);
+// Organic sepal - hangs DOWN below the receptacle
+function OrganicSepal({ angle, lengthMod, curveMod }: { angle: number; lengthMod: number; curveMod: number }) {
+    const geometry = useMemo(() => {
+        const shape = new THREE.Shape();
+        const len = 0.12 * lengthMod;
+        // Leaf shape pointing down (-Y)
+        shape.moveTo(0, 0);
+        shape.bezierCurveTo(0.005, -len * 0.3, 0.006, -len * 0.6, 0.003, -len);
+        shape.lineTo(0, -len - 0.01);
+        shape.bezierCurveTo(-0.003, -len, -0.006, -len * 0.6, -0.005, -len * 0.3);
+        shape.lineTo(0, 0);
 
+        const extrudeSettings = { depth: 0.001, bevelEnabled: false };
+        return new THREE.ExtrudeGeometry(shape, extrudeSettings);
+    }, [lengthMod]);
+
+    // First rotate around Y to position around stem, then tilt outward on X
     return (
-        <group rotation={[tilt, angle, 0]}>
-            <mesh>
-                <tubeGeometry args={[curve, 8, 0.006, 6, false]} />
-                <meshStandardMaterial color="#8B6914" roughness={0.75} />
-            </mesh>
-            {/* Sepal tip */}
-            <mesh position={[0.055, -0.08, 0]} rotation={[0, 0, -0.5]}>
-                <coneGeometry args={[0.008, 0.025, 4]} />
-                <meshStandardMaterial color="#7A5C12" roughness={0.8} />
-            </mesh>
+        <group rotation={[0, angle, 0]}>
+            <group rotation={[0.35 + curveMod * 0.2, 0, Math.sin(angle * 3) * 0.08]} position={[0.02, 0, 0]}>
+                <mesh geometry={geometry}>
+                    <meshStandardMaterial
+                        color="#8a9a45"
+                        roughness={0.7}
+                        side={THREE.DoubleSide}
+                    />
+                </mesh>
+            </group>
         </group>
     );
 }
@@ -109,7 +116,7 @@ function DandelionScene() {
 
     useEffect(() => {
         const newSeeds: Seed[] = [];
-        const seedCount = 200;
+        const seedCount = 250;
 
         for (let i = 0; i < seedCount; i++) {
             const phi = Math.acos(1 - 2 * (i + 0.5) / seedCount);
@@ -119,7 +126,7 @@ function DandelionScene() {
             const y = Math.cos(phi);
             const z = Math.sin(phi) * Math.sin(theta);
 
-            if (y < -0.08) continue;
+            if (y < -0.05) continue;
 
             const direction = new THREE.Vector3(x, y, z).normalize();
             const basePos = direction.clone().multiplyScalar(receptacleRadius);
@@ -185,39 +192,44 @@ function DandelionScene() {
         setSeeds([...seedsRef.current]);
     });
 
+    const sepals = useMemo(() => {
+        const arr = [];
+        const count = 14;
+        for (let i = 0; i < count; i++) {
+            arr.push({
+                angle: (i / count) * Math.PI * 2 + Math.random() * 0.15,
+                lengthMod: 0.9 + Math.random() * 0.4,
+                curveMod: Math.random(),
+            });
+        }
+        return arr;
+    }, []);
+
     return (
         <group ref={groupRef}>
-            {/* Stem */}
-            <mesh position={[0, -0.5, 0]}>
-                <cylinderGeometry args={[0.01, 0.018, 1.1, 12]} />
-                <meshStandardMaterial color="#4a7a3a" roughness={0.85} metalness={0.05} />
+            {/* Main stem */}
+            <mesh position={[0, -0.48, 0]}>
+                <cylinderGeometry args={[0.012, 0.02, 1.0, 16]} />
+                <meshStandardMaterial color="#6a8a4a" roughness={0.75} />
             </mesh>
 
-            {/* Stem detail */}
-            {[0, 1, 2, 3].map(i => (
-                <mesh key={i} position={[0, -0.5, 0]} rotation={[0, (i * Math.PI) / 2, 0]}>
-                    <cylinderGeometry args={[0.0115, 0.019, 1.1, 4]} />
-                    <meshStandardMaterial color="#3a6a2a" roughness={0.9} transparent opacity={0.3} />
-                </mesh>
-            ))}
+            {/* Stem collar - where sepals attach */}
+            <mesh position={[0, 0.015, 0]}>
+                <cylinderGeometry args={[0.022, 0.016, 0.025, 16]} />
+                <meshStandardMaterial color="#7a9a5a" roughness={0.7} />
+            </mesh>
 
-            {/* Sepals - brownish curved structures */}
-            <group position={[0, 0.01, 0]}>
-                {[0, 1, 2, 3, 4, 5, 6, 7].map(i => (
-                    <Sepal key={i} angle={(i * Math.PI * 2) / 8} tilt={0.3 + (i % 2) * 0.15} />
+            {/* Sepals - positioned at base of receptacle, hanging DOWN */}
+            <group position={[0, -0.005, 0]}>
+                {sepals.map((s, i) => (
+                    <OrganicSepal key={i} angle={s.angle} lengthMod={s.lengthMod} curveMod={s.curveMod} />
                 ))}
             </group>
 
-            {/* Stem connector */}
-            <mesh position={[0, 0.03, 0]} rotation={[Math.PI, 0, 0]}>
-                <coneGeometry args={[0.016, 0.035, 8]} />
-                <meshStandardMaterial color="#5a8a4a" roughness={0.7} />
-            </mesh>
-
             {/* Receptacle */}
             <mesh position={[0, 0.015, 0]}>
-                <sphereGeometry args={[receptacleRadius, 20, 20]} />
-                <meshStandardMaterial color="#a89040" roughness={0.55} metalness={0.1} />
+                <sphereGeometry args={[receptacleRadius, 24, 24]} />
+                <meshStandardMaterial color="#c8b060" roughness={0.5} metalness={0.05} />
             </mesh>
 
             {/* Seeds */}
@@ -233,16 +245,15 @@ function SceneContent() {
             <directionalLight position={[5, 8, 4]} intensity={1.2} color="#fff8e8" />
             <directionalLight position={[-4, 5, -3]} intensity={0.5} color="#e0f0ff" />
             <directionalLight position={[0, 3, -5]} intensity={0.4} color="#ffffff" />
-            <ambientLight intensity={0.4} />
+            <ambientLight intensity={0.45} />
             <DandelionScene />
-            {/* User can rotate! */}
             <OrbitControls
                 enableZoom={true}
                 enablePan={false}
-                minDistance={0.8}
-                maxDistance={3}
-                minPolarAngle={Math.PI * 0.2}
-                maxPolarAngle={Math.PI * 0.8}
+                minDistance={0.6}
+                maxDistance={2.5}
+                minPolarAngle={Math.PI * 0.15}
+                maxPolarAngle={Math.PI * 0.85}
             />
         </>
     );
@@ -265,33 +276,33 @@ export default function MakeAWishPage() {
                 className="absolute inset-0"
                 style={{
                     background: `linear-gradient(170deg,
-                        #c5d8e8 0%, #d0dfe5 20%, #b8c9b5 45%,
-                        #9ab89a 65%, #7a9a78 85%, #5a7a58 100%
+                        #d5e3ed 0%, #dce8e5 25%, #c8d9c5 50%,
+                        #aac8aa 75%, #8aaa88 100%
                     )`,
-                    filter: 'blur(60px)',
-                    opacity: 0.7,
+                    filter: 'blur(50px)',
+                    opacity: 0.65,
                 }}
             />
-            <div className="absolute inset-0 bg-gradient-to-b from-white/5 to-black/20" />
+            <div className="absolute inset-0 bg-gradient-to-b from-white/10 to-black/15" />
 
             <QROverlay mode="blow" />
 
             <div className="absolute top-0 left-0 right-0 p-5 z-10 flex justify-between items-start">
                 <div className="pointer-events-none">
-                    <h1 className="text-3xl font-light text-gray-800 drop-shadow-sm">Make a Wish</h1>
-                    <p className="text-xs text-gray-600 mt-1">
-                        {!isConnected ? "Connect phone..." : isDone ? "✨ Wish away" : "Blow gently... (drag to rotate)"}
+                    <h1 className="text-3xl font-light text-gray-700">Make a Wish</h1>
+                    <p className="text-xs text-gray-500 mt-1">
+                        {!isConnected ? "Connect phone..." : isDone ? "✨ Wish away" : "Blow gently... drag to rotate"}
                     </p>
                 </div>
-                <Link href="/" className="text-gray-500 hover:text-gray-800 text-xs">← back</Link>
+                <Link href="/" className="text-gray-400 hover:text-gray-700 text-xs">← back</Link>
             </div>
 
             {isConnected && !isDone && (
                 <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10">
                     <div className="relative w-14 h-14">
                         <svg className="w-full h-full -rotate-90">
-                            <circle cx="28" cy="28" r="24" fill="none" stroke="rgba(0,0,0,0.1)" strokeWidth="2" />
-                            <circle cx="28" cy="28" r="24" fill="none" stroke="rgba(80,100,80,0.7)" strokeWidth="2"
+                            <circle cx="28" cy="28" r="24" fill="none" stroke="rgba(0,0,0,0.08)" strokeWidth="2" />
+                            <circle cx="28" cy="28" r="24" fill="none" stroke="rgba(90,120,90,0.6)" strokeWidth="2"
                                 strokeDasharray={`${progress * 150.8} 150.8`} strokeLinecap="round" />
                         </svg>
                         <div className="absolute inset-0 flex items-center justify-center text-xl">
@@ -303,11 +314,11 @@ export default function MakeAWishPage() {
 
             {isDone && (
                 <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 text-center">
-                    <p className="text-gray-600 text-sm italic">May your wish come true</p>
+                    <p className="text-gray-500 text-sm italic">May your wish come true</p>
                 </div>
             )}
 
-            <Canvas camera={{ position: [0, 0.1, 1.5], fov: 45 }}>
+            <Canvas camera={{ position: [0, 0.05, 1.3], fov: 45 }}>
                 <Suspense fallback={null}><SceneContent /></Suspense>
             </Canvas>
         </div>

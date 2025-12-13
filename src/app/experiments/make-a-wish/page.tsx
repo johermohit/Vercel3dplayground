@@ -154,38 +154,63 @@ function DandelionScene() {
     useFrame((state, delta) => {
         const { sensorData, isConnected } = useConnectionStore.getState();
         const blow = sensorData.blow;
+        const time = state.clock.elapsedTime;
 
         if (!isConnected && phase !== 'waiting' && phase !== 'done') setPhase('waiting');
         else if (isConnected && phase === 'waiting') setPhase('ready');
 
+        // Blow detection and seed detachment
         if (blow?.isBlowing && phase !== 'done') {
-            const newProgress = Math.min(1, blowProgress + blow.intensity * delta * 0.35);
+            const newProgress = Math.min(1, blowProgress + blow.intensity * delta * 0.5);
             setBlowProgress(newProgress);
             if (phase === 'ready') setPhase('blowing');
 
+            // Detach seeds progressively
             const detachCount = Math.floor(newProgress * seedsRef.current.length);
             seedsRef.current.forEach((seed, i) => {
                 if (!seed.detached && i < detachCount) {
                     seed.detached = true;
+                    // Initial burst velocity - mostly horizontal (wind direction) + upward lift
+                    const windDir = 0.8 + Math.random() * 0.4; // Blow to the right
                     seed.velocity.set(
-                        seed.direction.x * 0.25 + (Math.random() - 0.3) * 0.25,
-                        0.4 + Math.random() * 0.35,
-                        seed.direction.z * 0.15 + (Math.random() - 0.5) * 0.15
+                        windDir + seed.direction.x * 0.3,
+                        0.3 + Math.random() * 0.5 + seed.direction.y * 0.2,
+                        (Math.random() - 0.5) * 0.3 + seed.direction.z * 0.15
                     );
                 }
             });
             if (newProgress >= 1) setPhase('done');
         }
 
+        // Realistic dandelion seed physics
         seedsRef.current.forEach(seed => {
             if (seed.detached) {
-                seed.velocity.y -= delta * 0.03;
-                seed.velocity.x += Math.sin(state.clock.elapsedTime * 1.5 + seed.id) * delta * 0.04;
-                seed.velocity.multiplyScalar(0.998);
-                seed.position.add(seed.velocity.clone().multiplyScalar(delta * 2));
-                seed.direction.applyAxisAngle(new THREE.Vector3(1, 0, 0), seed.rotationSpeed.x);
+                // Very gentle gravity (parachute effect from pappus)
+                seed.velocity.y -= delta * 0.015;
+
+                // Wind drift - oscillating breeze
+                const windX = Math.sin(time * 0.8 + seed.id * 0.1) * 0.02;
+                const windZ = Math.cos(time * 0.6 + seed.id * 0.2) * 0.01;
+                seed.velocity.x += windX * delta;
+                seed.velocity.z += windZ * delta;
+
+                // Air resistance (more drag = slower fall)
+                seed.velocity.multiplyScalar(0.992);
+
+                // Terminal velocity limit (seeds float, don't plummet)
+                if (seed.velocity.y < -0.15) seed.velocity.y = -0.15;
+
+                // Update position
+                seed.position.add(seed.velocity.clone().multiplyScalar(delta * 3));
+
+                // Gentle tumbling rotation
+                seed.direction.applyAxisAngle(new THREE.Vector3(1, 0, 0), seed.rotationSpeed.x * 0.5);
                 seed.direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), seed.rotationSpeed.y);
-                seed.opacity = Math.max(0, 1 - (seed.position.length() - 0.4) * 0.4);
+                seed.direction.applyAxisAngle(new THREE.Vector3(0, 0, 1), seed.rotationSpeed.z * 0.3);
+
+                // Fade only when very far (seeds stay visible longer)
+                const dist = seed.position.length();
+                seed.opacity = Math.max(0, 1 - Math.max(0, dist - 1.5) * 0.25);
             }
         });
 

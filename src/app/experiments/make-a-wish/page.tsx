@@ -11,15 +11,17 @@ import QROverlay from "@/components/QROverlay";
 
 interface Seed {
     id: number;
+    basePosition: THREE.Vector3;
     position: THREE.Vector3;
     velocity: THREE.Vector3;
     rotationSpeed: THREE.Vector3;
     opacity: number;
     detached: boolean;
     direction: THREE.Vector3;
+    agitation: number; // How much this seed is shaking from wind
 }
 
-function DandelionSeed({ seed }: { seed: Seed }) {
+function DandelionSeed({ seed, intensity }: { seed: Seed; intensity: number }) {
     const filaments = useMemo(() => {
         const lines: THREE.Vector3[][] = [];
         const count = 26;
@@ -43,9 +45,20 @@ function DandelionSeed({ seed }: { seed: Seed }) {
 
     if (seed.opacity <= 0) return null;
 
+    // Apply agitation shake when wind blows (before detaching)
+    const shake = !seed.detached && intensity > 0.1
+        ? new THREE.Vector3(
+            Math.sin(Date.now() * 0.02 + seed.id) * intensity * 0.008,
+            Math.cos(Date.now() * 0.015 + seed.id * 2) * intensity * 0.005,
+            Math.sin(Date.now() * 0.018 + seed.id * 3) * intensity * 0.006
+        )
+        : new THREE.Vector3(0, 0, 0);
+
+    const displayPos = seed.position.clone().add(shake);
+
     return (
         <group
-            position={seed.position.toArray()}
+            position={displayPos.toArray()}
             quaternion={new THREE.Quaternion().setFromUnitVectors(
                 new THREE.Vector3(0, 1, 0),
                 seed.direction.clone().normalize()
@@ -56,7 +69,6 @@ function DandelionSeed({ seed }: { seed: Seed }) {
                 <meshStandardMaterial color="#9a7530" roughness={0.6} />
             </mesh>
 
-            {/* Pedicel (stem) */}
             <Line
                 points={[new THREE.Vector3(0, 0.017, 0), new THREE.Vector3(0, 0.065, 0)]}
                 color="#f5f5f0"
@@ -65,7 +77,6 @@ function DandelionSeed({ seed }: { seed: Seed }) {
                 opacity={seed.opacity * 0.85}
             />
 
-            {/* Pappus filaments */}
             {filaments.map((line, i) => (
                 <Line key={i} points={line} color="#ffffff" lineWidth={0.22} transparent opacity={seed.opacity * 0.65} />
             ))}
@@ -73,12 +84,10 @@ function DandelionSeed({ seed }: { seed: Seed }) {
     );
 }
 
-// Organic sepal - hangs DOWN below the receptacle
 function OrganicSepal({ angle, lengthMod, curveMod }: { angle: number; lengthMod: number; curveMod: number }) {
     const geometry = useMemo(() => {
         const shape = new THREE.Shape();
         const len = 0.12 * lengthMod;
-        // Leaf shape pointing down (-Y)
         shape.moveTo(0, 0);
         shape.bezierCurveTo(0.005, -len * 0.3, 0.006, -len * 0.6, 0.003, -len);
         shape.lineTo(0, -len - 0.01);
@@ -89,16 +98,11 @@ function OrganicSepal({ angle, lengthMod, curveMod }: { angle: number; lengthMod
         return new THREE.ExtrudeGeometry(shape, extrudeSettings);
     }, [lengthMod]);
 
-    // First rotate around Y to position around stem, then tilt outward on X
     return (
         <group rotation={[0, angle, 0]}>
             <group rotation={[0.35 + curveMod * 0.2, 0, Math.sin(angle * 3) * 0.08]} position={[0.02, 0, 0]}>
                 <mesh geometry={geometry}>
-                    <meshStandardMaterial
-                        color="#8a9a45"
-                        roughness={0.7}
-                        side={THREE.DoubleSide}
-                    />
+                    <meshStandardMaterial color="#8a9a45" roughness={0.7} side={THREE.DoubleSide} />
                 </mesh>
             </group>
         </group>
@@ -109,8 +113,9 @@ function DandelionScene() {
     const groupRef = useRef<THREE.Group>(null);
     const seedsRef = useRef<Seed[]>([]);
     const [seeds, setSeeds] = useState<Seed[]>([]);
-    const [blowProgress, setBlowProgress] = useState(0);
-    const [phase, setPhase] = useState<'waiting' | 'ready' | 'blowing' | 'done'>('waiting');
+    const [currentIntensity, setCurrentIntensity] = useState(0);
+    const detachQueueRef = useRef<number[]>([]);
+    const lastDetachTimeRef = useRef(0);
 
     const receptacleRadius = 0.045;
 
@@ -134,6 +139,7 @@ function DandelionScene() {
 
             newSeeds.push({
                 id: i,
+                basePosition: basePos.clone(),
                 position: basePos.clone(),
                 velocity: new THREE.Vector3(0, 0, 0),
                 rotationSpeed: new THREE.Vector3(
@@ -144,6 +150,7 @@ function DandelionScene() {
                 opacity: 1,
                 detached: false,
                 direction: direction,
+                agitation: 0,
             });
         }
 
@@ -155,62 +162,82 @@ function DandelionScene() {
         const { sensorData, isConnected } = useConnectionStore.getState();
         const blow = sensorData.blow;
         const time = state.clock.elapsedTime;
+        const now = Date.now();
 
-        if (!isConnected && phase !== 'waiting' && phase !== 'done') setPhase('waiting');
-        else if (isConnected && phase === 'waiting') setPhase('ready');
+        // Get camera position for dynamic front-facing calculation
+        const cameraPos = state.camera.position.clone();
+        const cameraDir = cameraPos.clone().normalize();
 
-        // Blow detection and seed detachment
-        if (blow?.isBlowing && phase !== 'done') {
-            const newProgress = Math.min(1, blowProgress + blow.intensity * delta * 0.5);
-            setBlowProgress(newProgress);
-            if (phase === 'ready') setPhase('blowing');
+        // Get real-time intensity (not just isBlowing boolean)
+        const intensity = blow?.intensity ?? 0;
+        setCurrentIntensity(intensity);
 
-            // Detach seeds progressively
-            const detachCount = Math.floor(newProgress * seedsRef.current.length);
-            seedsRef.current.forEach((seed, i) => {
-                if (!seed.detached && i < detachCount) {
-                    seed.detached = true;
-                    // Initial burst velocity - mostly horizontal (wind direction) + upward lift
-                    const windDir = 0.8 + Math.random() * 0.4; // Blow to the right
-                    seed.velocity.set(
-                        windDir + seed.direction.x * 0.3,
-                        0.3 + Math.random() * 0.5 + seed.direction.y * 0.2,
-                        (Math.random() - 0.5) * 0.3 + seed.direction.z * 0.15
+        // REAL-TIME SEED DETACHMENT: While blowing, queue seeds to detach
+        if (intensity > 0.15 && isConnected) {
+            // Detach rate based on intensity (stronger blow = faster detach)
+            const detachInterval = Math.max(30, 200 - intensity * 150); // 30-200ms between detaches
+
+            if (now - lastDetachTimeRef.current > detachInterval) {
+                // Find next attached seed to detach
+                const attachedSeeds = seedsRef.current.filter(s => !s.detached);
+                if (attachedSeeds.length > 0) {
+                    // Calculate which seeds are FACING the camera (dot product > 0)
+                    // These are the seeds visible to the user, hit by wind first
+                    const frontSeeds = attachedSeeds.filter(s => {
+                        const dotProduct = s.direction.dot(cameraDir);
+                        return dotProduct > 0.2; // Facing camera
+                    });
+
+                    // Pick from front-facing seeds, or any if none left
+                    const candidates = frontSeeds.length > 0 ? frontSeeds : attachedSeeds;
+                    const target = candidates[Math.floor(Math.random() * Math.min(5, candidates.length))];
+
+                    target.detached = true;
+
+                    // Wind comes FROM camera, seeds fly AWAY (opposite of camera direction)
+                    const windPower = 0.4 + intensity * 0.6;
+                    const awayDir = cameraDir.clone().multiplyScalar(-1); // Away from camera
+
+                    target.velocity.set(
+                        awayDir.x * windPower + (Math.random() - 0.5) * 0.2,
+                        awayDir.y * windPower + 0.1 + Math.random() * 0.25,
+                        awayDir.z * windPower + (Math.random() - 0.5) * 0.1
                     );
+                    lastDetachTimeRef.current = now;
                 }
-            });
-            if (newProgress >= 1) setPhase('done');
+            }
         }
 
-        // Realistic dandelion seed physics
+        // Physics for all seeds
         seedsRef.current.forEach(seed => {
             if (seed.detached) {
-                // Very gentle gravity (parachute effect from pappus)
-                seed.velocity.y -= delta * 0.015;
+                // Flying seed physics
+                seed.velocity.y -= delta * 0.008; // Very gentle gravity (parachute effect)
 
-                // Wind drift - oscillating breeze
-                const windX = Math.sin(time * 0.8 + seed.id * 0.1) * 0.02;
-                const windZ = Math.cos(time * 0.6 + seed.id * 0.2) * 0.01;
-                seed.velocity.x += windX * delta;
-                seed.velocity.z += windZ * delta;
+                // Wind continues pushing seeds AWAY from camera
+                const awayDir = cameraDir.clone().multiplyScalar(-1);
+                seed.velocity.x += awayDir.x * intensity * delta * 0.2;
+                seed.velocity.z += awayDir.z * intensity * delta * 0.2;
 
-                // Air resistance (more drag = slower fall)
-                seed.velocity.multiplyScalar(0.992);
+                // Breeze oscillation (side to side drift)
+                seed.velocity.x += Math.sin(time * 0.7 + seed.id * 0.1) * 0.012 * delta;
 
-                // Terminal velocity limit (seeds float, don't plummet)
-                if (seed.velocity.y < -0.15) seed.velocity.y = -0.15;
+                // Air drag
+                seed.velocity.multiplyScalar(0.994);
+
+                // Terminal velocity
+                if (seed.velocity.y < -0.08) seed.velocity.y = -0.08;
 
                 // Update position
-                seed.position.add(seed.velocity.clone().multiplyScalar(delta * 3));
+                seed.position.add(seed.velocity.clone().multiplyScalar(delta * 5));
 
-                // Gentle tumbling rotation
+                // Tumbling
                 seed.direction.applyAxisAngle(new THREE.Vector3(1, 0, 0), seed.rotationSpeed.x * 0.5);
                 seed.direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), seed.rotationSpeed.y);
-                seed.direction.applyAxisAngle(new THREE.Vector3(0, 0, 1), seed.rotationSpeed.z * 0.3);
 
-                // Fade only when very far (seeds stay visible longer)
+                // Fade when far from dandelion center
                 const dist = seed.position.length();
-                seed.opacity = Math.max(0, 1 - Math.max(0, dist - 1.5) * 0.25);
+                seed.opacity = Math.max(0, 1 - Math.max(0, dist - 1.5) * 0.18);
             }
         });
 
@@ -232,33 +259,28 @@ function DandelionScene() {
 
     return (
         <group ref={groupRef}>
-            {/* Main stem */}
             <mesh position={[0, -0.48, 0]}>
                 <cylinderGeometry args={[0.012, 0.02, 1.0, 16]} />
                 <meshStandardMaterial color="#6a8a4a" roughness={0.75} />
             </mesh>
 
-            {/* Stem collar - where sepals attach */}
             <mesh position={[0, 0.015, 0]}>
                 <cylinderGeometry args={[0.022, 0.016, 0.025, 16]} />
                 <meshStandardMaterial color="#7a9a5a" roughness={0.7} />
             </mesh>
 
-            {/* Sepals - positioned at base of receptacle, hanging DOWN */}
             <group position={[0, -0.005, 0]}>
                 {sepals.map((s, i) => (
                     <OrganicSepal key={i} angle={s.angle} lengthMod={s.lengthMod} curveMod={s.curveMod} />
                 ))}
             </group>
 
-            {/* Receptacle */}
             <mesh position={[0, 0.015, 0]}>
                 <sphereGeometry args={[receptacleRadius, 24, 24]} />
                 <meshStandardMaterial color="#c8b060" roughness={0.5} metalness={0.05} />
             </mesh>
 
-            {/* Seeds */}
-            {seeds.map(seed => <DandelionSeed key={seed.id} seed={seed} />)}
+            {seeds.map(seed => <DandelionSeed key={seed.id} seed={seed} intensity={currentIntensity} />)}
         </group>
     );
 }
@@ -287,13 +309,13 @@ function SceneContent() {
 export default function MakeAWishPage() {
     const { sensorData, isConnected } = useConnectionStore();
     const blow = sensorData.blow;
-    const [progress, setProgress] = useState(0);
 
-    useEffect(() => {
-        if (blow?.isBlowing) setProgress(prev => Math.min(1, prev + blow.intensity * 0.008));
-    }, [blow]);
+    // Real-time intensity for immediate feedback
+    const intensity = blow?.intensity ?? 0;
+    const isBlowing = intensity > 0.1;
 
-    const isDone = progress >= 0.99;
+    // Count remaining seeds
+    const [remainingSeeds, setRemainingSeeds] = useState(250);
 
     return (
         <div className="h-full w-full overflow-hidden relative">
@@ -316,30 +338,34 @@ export default function MakeAWishPage() {
                 <div className="pointer-events-none">
                     <h1 className="text-3xl font-light text-gray-700">Make a Wish</h1>
                     <p className="text-xs text-gray-500 mt-1">
-                        {!isConnected ? "Connect phone..." : isDone ? "✨ Wish away" : "Blow gently... drag to rotate"}
+                        {!isConnected ? "Connect phone..." : "Blow to scatter your wish"}
                     </p>
                 </div>
                 <Link href="/" className="text-gray-400 hover:text-gray-700 text-xs">← back</Link>
             </div>
 
-            {isConnected && !isDone && (
+            {/* Real-time blow intensity indicator */}
+            {isConnected && (
                 <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10">
-                    <div className="relative w-14 h-14">
-                        <svg className="w-full h-full -rotate-90">
-                            <circle cx="28" cy="28" r="24" fill="none" stroke="rgba(0,0,0,0.08)" strokeWidth="2" />
-                            <circle cx="28" cy="28" r="24" fill="none" stroke="rgba(90,120,90,0.6)" strokeWidth="2"
-                                strokeDasharray={`${progress * 150.8} 150.8`} strokeLinecap="round" />
-                        </svg>
-                        <div className="absolute inset-0 flex items-center justify-center text-xl">
-                            {blow?.isBlowing ? '💨' : '🌬️'}
+                    <div className="flex flex-col items-center gap-2">
+                        {/* Intensity bar */}
+                        <div className="w-24 h-2 bg-black/10 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-gradient-to-r from-green-400 to-green-600 transition-all duration-75"
+                                style={{ width: `${intensity * 100}%` }}
+                            />
+                        </div>
+                        {/* Animated wind icon */}
+                        <div
+                            className="text-2xl transition-transform duration-100"
+                            style={{
+                                transform: isBlowing ? `translateX(${intensity * 8}px) scale(${1 + intensity * 0.2})` : 'none',
+                                opacity: isBlowing ? 1 : 0.5
+                            }}
+                        >
+                            {isBlowing ? '💨' : '🌬️'}
                         </div>
                     </div>
-                </div>
-            )}
-
-            {isDone && (
-                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 text-center">
-                    <p className="text-gray-500 text-sm italic">May your wish come true</p>
                 </div>
             )}
 

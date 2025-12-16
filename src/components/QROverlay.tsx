@@ -14,12 +14,29 @@ export default function QROverlay({ mode = 'cube' }: { mode?: string }) {
         }
     }, [sessionId, generateSessionId]);
 
-    // Smart URL generation: Use 10.0.0.147 for dev, hostname for prod
-    const mobileUrl = typeof window !== 'undefined'
-        ? (window.location.hostname === 'localhost'
-            ? `http://10.0.0.147:3000/mobile?session=${sessionId}&mode=${mode}`
-            : `${window.location.protocol}//${window.location.hostname}/mobile?session=${sessionId}&mode=${mode}`)
-        : '';
+    // Smart URL generation for mobile connection
+    // - Local dev (accessed via localhost): Use HTTPS on local IP for phone
+    // - Local dev (accessed via local IP already): Use same HTTPS URL
+    // - Production (Vercel etc): Use current hostname
+    const getMobileUrl = () => {
+        if (typeof window === 'undefined') return '';
+
+        const { protocol, hostname, port } = window.location;
+        const isLocalDev = hostname === 'localhost' || hostname === '127.0.0.1';
+        const isLocalNetwork = hostname.startsWith('10.') || hostname.startsWith('192.168.') || hostname.startsWith('172.');
+
+        // Local development: Always use HTTPS via NGINX on local IP
+        if (isLocalDev || isLocalNetwork) {
+            // Use your local network IP with HTTPS (via NGINX on port 443)
+            const localIP = '10.0.0.147';
+            return `https://${localIP}/mobile?session=${sessionId}&mode=${mode}`;
+        }
+
+        // Production: Use current protocol and hostname
+        return `${protocol}//${hostname}/mobile?session=${sessionId}&mode=${mode}`;
+    };
+
+    const mobileUrl = getMobileUrl();
 
     return (
         <AnimatePresence>

@@ -1,13 +1,13 @@
 "use client";
 
 import React, { Suspense, useRef, useMemo, useEffect, useState } from "react";
-import Link from "next/link";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { shaderMaterial } from "@react-three/drei";
 import * as THREE from "three";
 import { usePeerHost } from "@/hooks/usePeerHost";
 import { useConnectionStore } from "@/store/connectionStore";
 import QROverlay from "@/components/QROverlay";
+import BackToLobby from "@/components/BackToLobby";
 
 // Blow-reactive shader (particles disperse when you blow)
 const BlowMaterial = shaderMaterial(
@@ -151,17 +151,17 @@ export default function BlowTestPage() {
 
     return (
         <div className="h-full w-full bg-black text-white overflow-hidden">
+            <BackToLobby />
             <QROverlay mode="blow" />
 
             {/* Header */}
-            <div className="absolute top-0 left-0 right-0 p-4 z-10 flex justify-between items-start">
+            <div className="absolute top-12 left-0 right-0 p-4 z-10">
                 <div className="pointer-events-none">
                     <h1 className="text-2xl font-bold tracking-tight text-cyan-400">08. BLOW</h1>
                     <p className="text-[9px] font-mono text-white/40 mt-0.5">
                         {isConnected ? "BLOW ON YOUR PHONE'S MIC" : "SCAN QR TO CONNECT"}
                     </p>
                 </div>
-                <Link href="/" className="text-gray-500 hover:text-white text-xs font-mono">← LOBBY</Link>
             </div>
 
             {/* Stats */}
@@ -185,8 +185,8 @@ export default function BlowTestPage() {
                     <div className="w-40 h-2 bg-white/10 rounded-full overflow-hidden">
                         <div
                             className={`h-full rounded-full transition-all duration-75 ${blow?.isBlowing
-                                    ? 'bg-gradient-to-r from-cyan-500 to-blue-400'
-                                    : 'bg-white/20'
+                                ? 'bg-gradient-to-r from-cyan-500 to-blue-400'
+                                : 'bg-white/20'
                                 }`}
                             style={{ width: `${(blow?.intensity || 0) * 100}%` }}
                         />

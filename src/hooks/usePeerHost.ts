@@ -64,6 +64,21 @@ export function usePeerHost() {
                             // Store blow intensity for blow experiments
                             useConnectionStore.getState().setSensorData({ blow: data.payload });
                         }
+                        if (data.type === 'CAMERA_INFO') {
+                            // Store camera info from mobile
+                            useConnectionStore.getState().setSensorData({ camera: data.payload });
+                        }
+                        if (data.type === 'CAMERA_STATUS') {
+                            // Update camera streaming status
+                            const current = useConnectionStore.getState().sensorData.camera || {};
+                            useConnectionStore.getState().setSensorData({
+                                camera: { ...current, ...data.payload }
+                            });
+                        }
+                        if (data.type === 'FRAME_ANALYSIS') {
+                            // Store frame analysis data (color, brightness)
+                            useConnectionStore.getState().setSensorData({ frameAnalysis: data.payload });
+                        }
                     });
 
                     conn.on('close', () => {

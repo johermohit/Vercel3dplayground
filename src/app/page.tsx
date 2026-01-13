@@ -85,6 +85,51 @@ const experiments = [
     tag: "NEW",
     tagColor: "bg-green-500 text-white",
   },
+  {
+    id: "10",
+    name: "Camera Lab",
+    href: "/experiments/camera-lab",
+    desc: "Real-time frame analysis: color detection & brightness",
+    color: "pink",
+    tag: "NEW",
+    tagColor: "bg-pink-500 text-white",
+  },
+  {
+    id: "11",
+    name: "Light Switch",
+    href: "/experiments/light-switch",
+    desc: "Cover your phone camera to control a virtual light bulb",
+    color: "amber",
+    tag: "NEW",
+    tagColor: "bg-amber-500 text-black",
+  },
+  {
+    id: "12",
+    name: "Firefly Jungle",
+    href: "/experiments/firefly-jungle",
+    desc: "Cover your phone to awaken glowing fireflies in a dark jungle",
+    color: "emerald",
+    tag: "NEW",
+    tagColor: "bg-emerald-500 text-black",
+  },
+  {
+    id: "13",
+    name: "Video Shape",
+    href: "/experiments/shader-camera",
+    desc: "Wrap your live camera feed around spinning 3D objects",
+    color: "fuchsia",
+    tag: "PHASE 3",
+    tagColor: "bg-fuchsia-500 text-white",
+  },
+  {
+    id: "14",
+    name: "Shadow Giant",
+    href: "/experiments/shadow-giant",
+    desc: "Your silhouette looms over tiny creatures as a giant shadow",
+    color: "slate",
+    tag: "PHASE 3",
+    tagColor: "bg-slate-500 text-white",
+  },
 ];
 
 const colorMap: Record<string, { border: string; bg: string; hover: string; text: string; desc: string }> = {
@@ -96,6 +141,11 @@ const colorMap: Record<string, { border: string; bg: string; hover: string; text
   blue: { border: "border-blue-500/30", bg: "bg-blue-900/20", hover: "hover:bg-blue-800/40", text: "text-blue-300", desc: "text-blue-400/70" },
   cyan: { border: "border-cyan-500/30", bg: "bg-cyan-900/20", hover: "hover:bg-cyan-800/40", text: "text-cyan-300", desc: "text-cyan-400/70" },
   green: { border: "border-green-500/30", bg: "bg-green-900/20", hover: "hover:bg-green-800/40", text: "text-green-300", desc: "text-green-400/70" },
+  pink: { border: "border-pink-500/30", bg: "bg-pink-900/20", hover: "hover:bg-pink-800/40", text: "text-pink-300", desc: "text-pink-400/70" },
+  amber: { border: "border-amber-500/30", bg: "bg-amber-900/20", hover: "hover:bg-amber-800/40", text: "text-amber-300", desc: "text-amber-400/70" },
+  emerald: { border: "border-emerald-500/30", bg: "bg-emerald-900/20", hover: "hover:bg-emerald-800/40", text: "text-emerald-300", desc: "text-emerald-400/70" },
+  fuchsia: { border: "border-fuchsia-500/30", bg: "bg-fuchsia-900/20", hover: "hover:bg-fuchsia-800/40", text: "text-fuchsia-300", desc: "text-fuchsia-400/70" },
+  slate: { border: "border-slate-500/30", bg: "bg-slate-900/20", hover: "hover:bg-slate-800/40", text: "text-slate-300", desc: "text-slate-400/70" },
 };
 
 export default function Lobby() {

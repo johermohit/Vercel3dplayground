@@ -18,6 +18,9 @@ interface ConnectionState {
         clay?: { x: number; y: number; dx?: number; dy?: number; force: number; radius: number };
         wand?: { x: number; y: 0; z: number; calibrated: boolean };
         blow?: { intensity: number; isBlowing: boolean; timestamp: number };
+        light?: { illuminance: number };
+        camera?: { count: number; cameras: { id: string; label: string }[]; streaming?: boolean; facing?: string };
+        frameAnalysis?: { avgColor: { r: number; g: number; b: number }; brightness: number; colorName: string; timestamp: number };
     };
     setSessionId: (id: string) => void;
     setConnected: (status: boolean) => void;

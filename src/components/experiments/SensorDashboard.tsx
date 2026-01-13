@@ -78,6 +78,20 @@ export default function SensorDashboard() {
                         icon="👆"
                         data={sensorData.touch}
                     />
+                    <SensorCard
+                        title="AMBIENT LIGHT"
+                        icon="💡"
+                        data={sensorData.light}
+                    />
+                    <SensorCard
+                        title="CAMERA"
+                        icon="📷"
+                        data={sensorData.camera ? {
+                            devices: sensorData.camera.count,
+                            streaming: sensorData.camera.streaming ? 'YES' : 'NO',
+                            facing: sensorData.camera.facing || '-'
+                        } : undefined}
+                    />
                     <div className="bg-gray-900/30 border border-gray-800 p-4 rounded-xl flex flex-col justify-center items-center text-center">
                         <span className="text-4xl mb-4">🔮</span>
                         <h3 className="text-teal-400 font-bold mb-2">Capabilities</h3>

@@ -211,6 +211,29 @@ function MobileControllerContent() {
                 if (!iosPermissionNeeded) addLog("Motion: DeviceMotionEvent Undefined");
             }
 
+            // 5. Ambient Light Sensor
+            if ('AmbientLightSensor' in window) {
+                try {
+                    const lightSensor = new (window as any).AmbientLightSensor();
+                    lightSensor.addEventListener('reading', () => {
+                        sendData({
+                            light: {
+                                illuminance: lightSensor.illuminance // in lux
+                            }
+                        });
+                    });
+                    lightSensor.addEventListener('error', (event: any) => {
+                        addLog(`Light Err: ${event.error.name}`);
+                    });
+                    lightSensor.start();
+                    addLog("Light Sensor: Active");
+                } catch (e: any) {
+                    addLog(`Light Err: ${e.message}`);
+                }
+            } else {
+                addLog("Light Sensor: Not supported");
+            }
+
         }, [status, isConnected, iosPermissionNeeded]);
 
         const requestIosPermission = async () => {
@@ -306,6 +329,21 @@ function MobileControllerContent() {
                                 }`}
                         >
                             {vibrateStatus === "Idle" ? "TEST VIBRATION 200ms" : vibrateStatus}
+                        </button>
+                    </div>
+
+                    {/* Camera Test */}
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                        <h3 className="text-xs text-gray-500 mb-3 tracking-widest">CAMERA</h3>
+                        <button
+                            onClick={() => {
+                                const url = new URL(window.location.href);
+                                url.searchParams.set('mode', 'camera');
+                                window.location.href = url.toString();
+                            }}
+                            className="w-full py-4 border rounded font-bold transition-all bg-transparent text-purple-400 border-purple-500/50 hover:bg-purple-500/10"
+                        >
+                            📷 OPEN CAMERA TEST
                         </button>
                     </div>
 
@@ -1004,6 +1042,709 @@ function MobileControllerContent() {
                 {/* Footer */}
                 <div className="p-3 bg-black/30 text-[10px] text-center text-cyan-500/50 border-t border-white/5">
                     {isListening ? 'LISTENING · BLOW ON MIC' : 'BLOW DETECTOR · v08'}
+                </div>
+            </div>
+        );
+    }
+
+    // --- SHADER STREAMING MODE (Stream video to desktop for GPU effects) ---
+    if (modeParam === 'shader') {
+        const [stream, setStream] = useState<MediaStream | null>(null);
+        const [isStreaming, setIsStreaming] = useState(false);
+        const [activeCamera, setActiveCamera] = useState<'user' | 'environment'>('environment');
+        const [error, setError] = useState<string | null>(null);
+        const videoRef = useRef<HTMLVideoElement>(null);
+        const peerRef = useRef<any>(null);
+
+        const startStreaming = async (facing: 'user' | 'environment') => {
+            try {
+                // Stop existing stream
+                if (stream) {
+                    stream.getTracks().forEach(t => t.stop());
+                }
+
+                const newStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: facing,
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                });
+
+                setStream(newStream);
+                setActiveCamera(facing);
+
+                if (videoRef.current) {
+                    videoRef.current.srcObject = newStream;
+                }
+
+                // Create peer connection to stream video
+                const { Peer } = await import('peerjs');
+                const sessionId = useConnectionStore.getState().sessionId;
+
+                if (peerRef.current) {
+                    peerRef.current.destroy();
+                }
+
+                const peer = new Peer();
+                peerRef.current = peer;
+
+                peer.on('open', (id) => {
+                    console.log('[ShaderMobile] Peer open, calling desktop...');
+                    // Call the desktop's video host
+                    const call = peer.call(`${sessionId}-video-host`, newStream);
+
+                    call.on('stream', () => {
+                        console.log('[ShaderMobile] Stream established!');
+                        setIsStreaming(true);
+                    });
+
+                    call.on('error', (err) => {
+                        console.error('[ShaderMobile] Call error:', err);
+                        setError('Stream error: ' + err.message);
+                    });
+
+                    // Also notify via data channel
+                    if (connRef.current?.open) {
+                        connRef.current.send({
+                            type: 'SHADER_STREAM_START',
+                            payload: { facing, peerId: id }
+                        });
+                    }
+                });
+
+                peer.on('error', (err) => {
+                    console.error('[ShaderMobile] Peer error:', err);
+                    setError('Connection error');
+                });
+
+                setIsStreaming(true);
+            } catch (e: any) {
+                setError(e.message);
+                console.error('[ShaderMobile] Error:', e);
+            }
+        };
+
+        const stopStreaming = () => {
+            if (stream) {
+                stream.getTracks().forEach(t => t.stop());
+                setStream(null);
+            }
+            if (peerRef.current) {
+                peerRef.current.destroy();
+                peerRef.current = null;
+            }
+            setIsStreaming(false);
+
+            if (connRef.current?.open) {
+                connRef.current.send({
+                    type: 'SHADER_STREAM_STOP',
+                    payload: {}
+                });
+            }
+        };
+
+        // Cleanup on unmount
+        useEffect(() => {
+            return () => {
+                if (stream) stream.getTracks().forEach(t => t.stop());
+                if (peerRef.current) peerRef.current.destroy();
+            };
+        }, []);
+
+        return (
+            <div className="h-full w-full bg-black text-white font-mono flex flex-col">
+                {/* Header */}
+                <div className="p-4 flex justify-between items-center border-b border-white/10 bg-gradient-to-r from-purple-900/50 to-pink-900/50">
+                    <h1 className="text-lg font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+                        📹 SHADER STREAM
+                    </h1>
+                    <div className="flex items-center gap-2">
+                        {isStreaming && <span className="text-xs text-green-400 animate-pulse">LIVE</span>}
+                        <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+                    </div>
+                </div>
+
+                {/* Video Preview */}
+                <div className="flex-1 relative">
+                    <video
+                        ref={videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        className="w-full h-full object-cover"
+                        style={{ transform: activeCamera === 'user' ? 'scaleX(-1)' : 'none' }}
+                    />
+
+                    {!isStreaming && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                            <div className="text-center">
+                                <div className="text-5xl mb-4">📹</div>
+                                <div className="text-gray-400">Tap to start streaming</div>
+                            </div>
+                        </div>
+                    )}
+
+                    {isStreaming && (
+                        <div className="absolute top-3 left-3 px-3 py-1 bg-red-500/90 rounded-full text-xs font-bold flex items-center gap-2">
+                            <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
+                            STREAMING TO DESKTOP
+                        </div>
+                    )}
+
+                    {error && (
+                        <div className="absolute bottom-3 left-3 right-3 p-2 bg-red-500/80 rounded text-xs">
+                            ⚠️ {error}
+                        </div>
+                    )}
+                </div>
+
+                {/* Controls */}
+                <div className="p-4 bg-gray-900 space-y-3">
+                    {/* Camera selection */}
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => startStreaming('environment')}
+                            className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${activeCamera === 'environment' && isStreaming
+                                    ? 'bg-purple-600 shadow-lg shadow-purple-500/30'
+                                    : 'bg-gray-700 hover:bg-gray-600'
+                                }`}
+                        >
+                            🔙 BACK CAM
+                        </button>
+                        <button
+                            onClick={() => startStreaming('user')}
+                            className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${activeCamera === 'user' && isStreaming
+                                    ? 'bg-purple-600 shadow-lg shadow-purple-500/30'
+                                    : 'bg-gray-700 hover:bg-gray-600'
+                                }`}
+                        >
+                            🤳 FRONT CAM
+                        </button>
+                    </div>
+
+                    {/* Main action */}
+                    <button
+                        onClick={isStreaming ? stopStreaming : () => startStreaming(activeCamera)}
+                        className={`w-full py-4 rounded-xl font-bold text-lg transition-all ${isStreaming
+                                ? 'bg-gradient-to-r from-red-600 to-pink-600 shadow-lg shadow-red-500/30'
+                                : 'bg-gradient-to-r from-purple-600 to-pink-600 shadow-lg shadow-purple-500/30'
+                            }`}
+                    >
+                        {isStreaming ? '⏹ STOP STREAMING' : '▶ START STREAMING'}
+                    </button>
+                </div>
+
+                {/* Footer */}
+                <div className="p-2 bg-black/50 text-[10px] text-center text-purple-400/50 border-t border-white/5">
+                    VIDEO STREAMS TO DESKTOP FOR GPU SHADER EFFECTS
+                </div>
+            </div>
+        );
+    }
+
+    // --- LIGHT SWITCH MODE (Phone as light sensor) ---
+    if (modeParam === 'lightswitch') {
+        const [brightness, setBrightness] = useState(1);
+        const [isActive, setIsActive] = useState(false);
+        const [error, setError] = useState<string | null>(null);
+        const videoRef = useRef<HTMLVideoElement>(null);
+        const canvasRef = useRef<HTMLCanvasElement>(null);
+        const streamRef = useRef<MediaStream | null>(null);
+        const analysisRef = useRef<number>(0);
+
+        // Auto-start front camera on mount
+        useEffect(() => {
+            const startSensor = async () => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 } },
+                        audio: false
+                    });
+                    streamRef.current = stream;
+                    if (videoRef.current) {
+                        videoRef.current.srcObject = stream;
+                        // Wait for video to actually start playing
+                        videoRef.current.onloadeddata = () => {
+                            console.log('[LightSwitch] Video loaded, starting analysis');
+                            setIsActive(true);
+                        };
+                        // Also try to play explicitly
+                        videoRef.current.play().catch(e => console.log('[LightSwitch] Autoplay error:', e));
+                    }
+                } catch (e: any) {
+                    setError(e.message);
+                    console.error('[LightSwitch] Camera error:', e);
+                }
+            };
+            startSensor();
+
+            return () => {
+                if (streamRef.current) {
+                    streamRef.current.getTracks().forEach(t => t.stop());
+                }
+                if (analysisRef.current) {
+                    cancelAnimationFrame(analysisRef.current);
+                }
+            };
+        }, []);
+
+        // Continuous brightness analysis
+        useEffect(() => {
+            if (!isActive || !videoRef.current || !canvasRef.current) {
+                console.log('[LightSwitch] Analysis waiting:', { isActive, hasVideo: !!videoRef.current, hasCanvas: !!canvasRef.current });
+                return;
+            }
+
+            console.log('[LightSwitch] Starting analysis loop');
+            const video = videoRef.current;
+            const canvas = canvasRef.current;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+
+            let lastSendTime = 0;
+            let frameCount = 0;
+            const SEND_INTERVAL = 50; // Very fast updates for responsive light
+
+            const analyzeLoop = () => {
+                if (video.readyState >= video.HAVE_CURRENT_DATA) {
+                    canvas.width = 32;  // Very low res for speed
+                    canvas.height = 24;
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    const data = imageData.data;
+
+                    let totalBrightness = 0;
+                    let count = 0;
+
+                    for (let i = 0; i < data.length; i += 4) {
+                        const r = data[i], g = data[i + 1], b = data[i + 2];
+                        totalBrightness += (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+                        count++;
+                    }
+
+                    const avgBrightness = totalBrightness / count;
+                    setBrightness(avgBrightness);
+
+                    // Debug log every 60 frames
+                    frameCount++;
+                    if (frameCount % 60 === 0) {
+                        console.log('[LightSwitch] Brightness:', avgBrightness.toFixed(2), 'Connected:', connRef.current?.open);
+                    }
+
+                    // Send to desktop
+                    const now = Date.now();
+                    if (now - lastSendTime > SEND_INTERVAL && connRef.current?.open) {
+                        connRef.current.send({
+                            type: 'FRAME_ANALYSIS',
+                            payload: {
+                                avgColor: { r: 0, g: 0, b: 0 }, // Not needed for light switch
+                                brightness: avgBrightness,
+                                colorName: avgBrightness < 0.3 ? 'Dark' : avgBrightness < 0.7 ? 'Medium' : 'Bright',
+                                timestamp: now
+                            }
+                        });
+                        lastSendTime = now;
+                    }
+                }
+
+                analysisRef.current = requestAnimationFrame(analyzeLoop);
+            };
+
+            analyzeLoop();
+
+            return () => {
+                if (analysisRef.current) cancelAnimationFrame(analysisRef.current);
+            };
+        }, [isActive]);
+
+        const isLightOn = brightness < 0.3;
+
+        return (
+            <div className={`h-full w-full flex flex-col items-center justify-center transition-colors duration-300 ${isLightOn
+                ? 'bg-gradient-to-b from-amber-900 via-amber-950 to-black'
+                : 'bg-gradient-to-b from-gray-900 to-black'
+                }`}>
+                {/* Hidden video and canvas - positioned off-screen, NOT display:none */}
+                <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    style={{ position: 'absolute', left: '-9999px', width: '1px', height: '1px' }}
+                />
+                <canvas ref={canvasRef} style={{ position: 'absolute', left: '-9999px' }} />
+
+                {/* Visual feedback */}
+                <div className="text-center">
+                    <div className={`text-8xl mb-8 transition-all duration-300 ${isLightOn ? 'scale-110' : 'scale-100 opacity-50'}`}>
+                        {isLightOn ? '💡' : '🌙'}
+                    </div>
+
+                    <div className={`text-3xl font-bold mb-4 ${isLightOn ? 'text-amber-300' : 'text-gray-500'}`}>
+                        {isLightOn ? 'LIGHT ON' : 'COVER CAMERA'}
+                    </div>
+
+                    {/* Brightness indicator */}
+                    <div className="w-48 h-3 bg-gray-800 rounded-full overflow-hidden mx-auto mb-4">
+                        <div
+                            className={`h-full transition-all duration-100 rounded-full ${isLightOn ? 'bg-amber-400' : 'bg-gray-600'
+                                }`}
+                            style={{ width: `${(1 - brightness) * 100}%` }}
+                        />
+                    </div>
+
+                    <div className="text-sm text-gray-500">
+                        {Math.round(brightness * 100)}% light detected
+                    </div>
+
+                    {error && (
+                        <div className="mt-4 text-red-400 text-sm">⚠️ {error}</div>
+                    )}
+                </div>
+
+                {/* Connection status */}
+                <div className="absolute bottom-8 left-0 right-0 text-center">
+                    <div className={`inline-block px-4 py-2 rounded-full text-xs ${isConnected
+                        ? 'bg-green-500/20 text-green-400'
+                        : 'bg-gray-800 text-gray-500'
+                        }`}>
+                        {isConnected ? '● Connected to desktop' : '○ Waiting for connection'}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // --- CAMERA MODE ---
+    if (modeParam === 'camera') {
+        const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+        const [activeCamera, setActiveCamera] = useState<'user' | 'environment'>('environment');
+        const [stream, setStream] = useState<MediaStream | null>(null);
+        const [isStreaming, setIsStreaming] = useState(false);
+        const [isAnalyzing, setIsAnalyzing] = useState(false);
+        const [error, setError] = useState<string | null>(null);
+        const [analysis, setAnalysis] = useState<{
+            avgColor: { r: number; g: number; b: number };
+            brightness: number;
+            colorName: string;
+        } | null>(null);
+
+        const videoRef = useRef<HTMLVideoElement>(null);
+        const canvasRef = useRef<HTMLCanvasElement>(null);
+        const analysisRef = useRef<number>(0);
+
+        // Discover cameras on mount
+        useEffect(() => {
+            const discoverCameras = async () => {
+                try {
+                    await navigator.mediaDevices.getUserMedia({ video: true });
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const videoDevices = devices.filter(d => d.kind === 'videoinput');
+                    setCameras(videoDevices);
+
+                    if (connRef.current?.open) {
+                        connRef.current.send({
+                            type: 'CAMERA_INFO',
+                            payload: {
+                                count: videoDevices.length,
+                                cameras: videoDevices.map(d => ({ id: d.deviceId, label: d.label }))
+                            }
+                        });
+                    }
+                } catch (e: any) {
+                    setError(e.message);
+                }
+            };
+            discoverCameras();
+        }, []);
+
+        // Frame analysis loop
+        useEffect(() => {
+            if (!isAnalyzing || !videoRef.current || !canvasRef.current) return;
+
+            const video = videoRef.current;
+            const canvas = canvasRef.current;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+
+            let lastSendTime = 0;
+            const SEND_INTERVAL = 100; // Send to desktop every 100ms
+
+            const analyzeLoop = () => {
+                if (!isAnalyzing) return;
+
+                if (video.readyState >= video.HAVE_CURRENT_DATA) {
+                    const width = video.videoWidth;
+                    const height = video.videoHeight;
+
+                    if (width > 0 && height > 0) {
+                        // Scale down for performance
+                        const scale = 0.2;
+                        canvas.width = width * scale;
+                        canvas.height = height * scale;
+                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                        const data = imageData.data;
+
+                        let totalR = 0, totalG = 0, totalB = 0, totalBrightness = 0;
+                        const sampleStep = 4; // Sample every 4th pixel
+                        let count = 0;
+
+                        for (let i = 0; i < data.length; i += 4 * sampleStep) {
+                            const r = data[i], g = data[i + 1], b = data[i + 2];
+                            totalR += r; totalG += g; totalB += b;
+                            totalBrightness += (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+                            count++;
+                        }
+
+                        const avgR = Math.round(totalR / count);
+                        const avgG = Math.round(totalG / count);
+                        const avgB = Math.round(totalB / count);
+                        const brightness = totalBrightness / count;
+
+                        // Get color name
+                        const rgbToHsl = (r: number, g: number, b: number) => {
+                            r /= 255; g /= 255; b /= 255;
+                            const max = Math.max(r, g, b), min = Math.min(r, g, b);
+                            let h = 0, s = 0;
+                            const l = (max + min) / 2;
+                            if (max !== min) {
+                                const d = max - min;
+                                s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                                switch (max) {
+                                    case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+                                    case g: h = ((b - r) / d + 2) / 6; break;
+                                    case b: h = ((r - g) / d + 4) / 6; break;
+                                }
+                            }
+                            return { h: h * 360, s: s * 100, l: l * 100 };
+                        };
+
+                        const { h, s, l } = rgbToHsl(avgR, avgG, avgB);
+                        let colorName = 'Unknown';
+                        if (l < 15) colorName = 'Black';
+                        else if (l > 85 && s < 20) colorName = 'White';
+                        else if (s < 15) colorName = 'Gray';
+                        else if (h < 15 || h >= 345) colorName = 'Red';
+                        else if (h < 45) colorName = 'Orange';
+                        else if (h < 75) colorName = 'Yellow';
+                        else if (h < 165) colorName = 'Green';
+                        else if (h < 195) colorName = 'Cyan';
+                        else if (h < 255) colorName = 'Blue';
+                        else if (h < 285) colorName = 'Purple';
+                        else if (h < 345) colorName = 'Pink';
+
+                        setAnalysis({
+                            avgColor: { r: avgR, g: avgG, b: avgB },
+                            brightness,
+                            colorName
+                        });
+
+                        // Throttle sending to desktop
+                        const now = Date.now();
+                        if (now - lastSendTime > SEND_INTERVAL && connRef.current?.open) {
+                            connRef.current.send({
+                                type: 'FRAME_ANALYSIS',
+                                payload: {
+                                    avgColor: { r: avgR, g: avgG, b: avgB },
+                                    brightness,
+                                    colorName,
+                                    timestamp: now
+                                }
+                            });
+                            lastSendTime = now;
+                        }
+                    }
+                }
+
+                analysisRef.current = requestAnimationFrame(analyzeLoop);
+            };
+
+            analyzeLoop();
+
+            return () => {
+                if (analysisRef.current) cancelAnimationFrame(analysisRef.current);
+            };
+        }, [isAnalyzing]);
+
+        const startCamera = async (facing: 'user' | 'environment') => {
+            try {
+                if (stream) stream.getTracks().forEach(t => t.stop());
+
+                const newStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } },
+                    audio: false
+                });
+
+                setStream(newStream);
+                setActiveCamera(facing);
+                setIsStreaming(true);
+
+                if (videoRef.current) {
+                    videoRef.current.srcObject = newStream;
+                }
+
+                if (connRef.current?.open) {
+                    connRef.current.send({
+                        type: 'CAMERA_STATUS',
+                        payload: { streaming: true, facing }
+                    });
+                }
+            } catch (e: any) {
+                setError(e.message);
+            }
+        };
+
+        const stopCamera = () => {
+            if (stream) {
+                stream.getTracks().forEach(t => t.stop());
+                setStream(null);
+            }
+            setIsStreaming(false);
+            setIsAnalyzing(false);
+            if (analysisRef.current) cancelAnimationFrame(analysisRef.current);
+            if (connRef.current?.open) {
+                connRef.current.send({
+                    type: 'CAMERA_STATUS',
+                    payload: { streaming: false }
+                });
+            }
+        };
+
+        const toggleAnalysis = () => {
+            setIsAnalyzing(!isAnalyzing);
+        };
+
+        const switchCamera = () => {
+            const newFacing = activeCamera === 'user' ? 'environment' : 'user';
+            startCamera(newFacing);
+        };
+
+        return (
+            <div className="h-full w-full bg-black text-white font-mono flex flex-col">
+                {/* Hidden canvas for frame analysis - off-screen, not display:none */}
+                <canvas ref={canvasRef} style={{ position: 'absolute', left: '-9999px' }} />
+
+                {/* Header */}
+                <div className="p-4 flex justify-between items-center border-b border-white/10 bg-gray-900">
+                    <h1 className="text-lg font-bold text-purple-400">📷 CAMERA LAB</h1>
+                    <div className="flex items-center gap-2">
+                        {isAnalyzing && <span className="text-xs text-green-400 animate-pulse">ANALYZING</span>}
+                        <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+                    </div>
+                </div>
+
+                {/* Video Preview */}
+                <div className="flex-1 relative bg-gray-800">
+                    <video
+                        ref={videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        className="w-full h-full object-cover"
+                    />
+
+                    {/* Analysis Overlay */}
+                    {isAnalyzing && analysis && (
+                        <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 to-transparent">
+                            {/* Color swatch and info */}
+                            <div className="flex items-center gap-3 mb-3">
+                                <div
+                                    className="w-16 h-16 rounded-lg border-2 border-white/30 shadow-lg"
+                                    style={{ backgroundColor: `rgb(${analysis.avgColor.r}, ${analysis.avgColor.g}, ${analysis.avgColor.b})` }}
+                                />
+                                <div>
+                                    <div className="text-2xl font-bold">{analysis.colorName}</div>
+                                    <div className="text-xs text-gray-400">
+                                        RGB({analysis.avgColor.r}, {analysis.avgColor.g}, {analysis.avgColor.b})
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Brightness bar */}
+                            <div className="space-y-1">
+                                <div className="flex justify-between text-xs">
+                                    <span className="text-gray-400">BRIGHTNESS</span>
+                                    <span className="text-yellow-400">{Math.round(analysis.brightness * 100)}%</span>
+                                </div>
+                                <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                                    <div
+                                        className="h-full bg-gradient-to-r from-gray-500 to-yellow-400 transition-all duration-100"
+                                        style={{ width: `${analysis.brightness * 100}%` }}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {!isStreaming && (
+                        <div className="absolute inset-0 flex items-center justify-center text-gray-500">
+                            <span className="text-4xl">📷</span>
+                        </div>
+                    )}
+                    {isStreaming && !isAnalyzing && (
+                        <div className="absolute top-2 left-2 px-2 py-1 bg-red-500 rounded text-xs animate-pulse">
+                            ● LIVE
+                        </div>
+                    )}
+                </div>
+
+                {/* Controls */}
+                <div className="p-4 bg-gray-900 space-y-3">
+                    {/* Camera selection */}
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => startCamera('environment')}
+                            className={`flex-1 py-2 rounded-lg font-bold text-sm transition-colors ${activeCamera === 'environment' && isStreaming
+                                ? 'bg-purple-600'
+                                : 'bg-gray-700 hover:bg-gray-600'
+                                }`}
+                        >
+                            🔙 BACK
+                        </button>
+                        <button
+                            onClick={() => startCamera('user')}
+                            className={`flex-1 py-2 rounded-lg font-bold text-sm transition-colors ${activeCamera === 'user' && isStreaming
+                                ? 'bg-purple-600'
+                                : 'bg-gray-700 hover:bg-gray-600'
+                                }`}
+                        >
+                            🤳 FRONT
+                        </button>
+                    </div>
+
+                    {/* Main actions */}
+                    <div className="flex gap-2">
+                        <button
+                            onClick={isStreaming ? stopCamera : () => startCamera(activeCamera)}
+                            className={`flex-1 py-3 rounded-xl font-bold transition-colors ${isStreaming
+                                ? 'bg-red-600 hover:bg-red-500'
+                                : 'bg-green-600 hover:bg-green-500'
+                                }`}
+                        >
+                            {isStreaming ? '⏹ STOP' : '▶ START'}
+                        </button>
+                        {isStreaming && (
+                            <button
+                                onClick={toggleAnalysis}
+                                className={`flex-1 py-3 rounded-xl font-bold transition-colors ${isAnalyzing
+                                    ? 'bg-yellow-500 text-black'
+                                    : 'bg-cyan-600 hover:bg-cyan-500'
+                                    }`}
+                            >
+                                {isAnalyzing ? '⏸ PAUSE' : '🔬 ANALYZE'}
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                {/* Footer */}
+                <div className="p-2 bg-black/30 text-[10px] text-center text-purple-500/50 border-t border-white/5">
+                    CAMERA LAB · {cameras.length} devices · {isAnalyzing ? 'ANALYZING' : isStreaming ? 'STREAMING' : 'IDLE'}
                 </div>
             </div>
         );

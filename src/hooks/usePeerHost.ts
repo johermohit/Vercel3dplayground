@@ -79,6 +79,18 @@ export function usePeerHost() {
                             // Store frame analysis data (color, brightness)
                             useConnectionStore.getState().setSensorData({ frameAnalysis: data.payload });
                         }
+                        if (data.type === 'ORIENTATION') {
+                            // Store orientation data for drive mode (police chase)
+                            useConnectionStore.getState().setSensorData({ orientation: data.data });
+                        }
+                        if (data.type === 'EXCAVATOR_CONTROL') {
+                            // Store excavator control data (D-pad, arm, bucket buttons)
+                            useConnectionStore.getState().setSensorData({ excavator: data.data });
+                        }
+                        if (data.type === 'LOADER_CONTROL') {
+                            // Store loader control data (sliders for lift, bucket, steering, throttle)
+                            useConnectionStore.getState().setSensorData({ loader: data.data });
+                        }
                     });
 
                     conn.on('close', () => {

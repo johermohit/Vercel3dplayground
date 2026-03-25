@@ -130,6 +130,42 @@ const experiments = [
     tag: "PHASE 3",
     tagColor: "bg-slate-500 text-white",
   },
+  {
+    id: "15",
+    name: "Police Chase",
+    href: "/experiments/police-chase",
+    desc: "Drive a police car with phone gyroscope and Rapier physics",
+    color: "indigo",
+    tag: "PHYSICS",
+    tagColor: "bg-indigo-500 text-white",
+  },
+  {
+    id: "16",
+    name: "JCB World",
+    href: "/experiments/jcb-world",
+    desc: "Drive a JCB loader through an open world with buildings and a skatepark",
+    color: "yellow",
+    tag: "NEW",
+    tagColor: "bg-yellow-500 text-black",
+  },
+  {
+    id: "17",
+    name: "JCB Loader",
+    href: "/experiments/jcb-loader",
+    desc: "Animated JCB 435B loader with phone-controlled lift and bucket",
+    color: "yellow",
+    tag: "VEHICLE",
+    tagColor: "bg-yellow-600 text-white",
+  },
+  {
+    id: "18",
+    name: "GLB Workshop",
+    href: "/experiments/glb-workshop",
+    desc: "Drag-and-drop 3D model inspector with hierarchy and joint controls",
+    color: "gray",
+    tag: "TOOL",
+    tagColor: "bg-gray-400 text-black",
+  },
 ];
 
 const colorMap: Record<string, { border: string; bg: string; hover: string; text: string; desc: string }> = {
@@ -146,6 +182,8 @@ const colorMap: Record<string, { border: string; bg: string; hover: string; text
   emerald: { border: "border-emerald-500/30", bg: "bg-emerald-900/20", hover: "hover:bg-emerald-800/40", text: "text-emerald-300", desc: "text-emerald-400/70" },
   fuchsia: { border: "border-fuchsia-500/30", bg: "bg-fuchsia-900/20", hover: "hover:bg-fuchsia-800/40", text: "text-fuchsia-300", desc: "text-fuchsia-400/70" },
   slate: { border: "border-slate-500/30", bg: "bg-slate-900/20", hover: "hover:bg-slate-800/40", text: "text-slate-300", desc: "text-slate-400/70" },
+  indigo: { border: "border-indigo-500/30", bg: "bg-indigo-900/20", hover: "hover:bg-indigo-800/40", text: "text-indigo-300", desc: "text-indigo-400/70" },
+  yellow: { border: "border-yellow-500/30", bg: "bg-yellow-900/20", hover: "hover:bg-yellow-800/40", text: "text-yellow-300", desc: "text-yellow-400/70" },
 };
 
 export default function Lobby() {

@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useConnectionStore } from "@/store/connectionStore";
 import type { Peer, DataConnection } from "peerjs";
+import { DriveMode, ExcavatorMode, LoaderMode } from "./modes";
 
 function MobileControllerContent() {
     const searchParams = useSearchParams();
@@ -14,6 +15,13 @@ function MobileControllerContent() {
     const connRef = useRef<DataConnection | null>(null);
     const lastTouchRef = useRef<{ x: number, y: number } | null>(null);
     const [intensity, setIntensity] = useState(0);
+    const [driveOrientation, setDriveOrientation] = useState({ alpha: 0, beta: 0, gamma: 0 });
+    const [mounted, setMounted] = useState(false);
+
+    // Mark as mounted on client
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     // Initialize Connection (Client)
     useEffect(() => {
@@ -42,6 +50,30 @@ function MobileControllerContent() {
             initClient();
         }
     }, [sessionParam, setSessionId, setConnected]);
+
+    // Drive mode orientation handler
+    useEffect(() => {
+        if (modeParam !== 'drive') return;
+
+        const handleOrientation = (e: DeviceOrientationEvent) => {
+            const alpha = e.alpha || 0;
+            const beta = e.beta || 0;
+            const gamma = e.gamma || 0;
+
+            setDriveOrientation({ alpha, beta, gamma });
+
+            // Send to desktop
+            if (connRef.current?.open) {
+                connRef.current.send({
+                    type: 'ORIENTATION',
+                    data: { alpha, beta, gamma }
+                });
+            }
+        };
+
+        window.addEventListener('deviceorientation', handleOrientation);
+        return () => window.removeEventListener('deviceorientation', handleOrientation);
+    }, [modeParam]);
 
     // --- GENERIC HANDLERS ---
     const handleTouchStart = (e: React.TouchEvent) => {
@@ -1207,8 +1239,8 @@ function MobileControllerContent() {
                         <button
                             onClick={() => startStreaming('environment')}
                             className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${activeCamera === 'environment' && isStreaming
-                                    ? 'bg-purple-600 shadow-lg shadow-purple-500/30'
-                                    : 'bg-gray-700 hover:bg-gray-600'
+                                ? 'bg-purple-600 shadow-lg shadow-purple-500/30'
+                                : 'bg-gray-700 hover:bg-gray-600'
                                 }`}
                         >
                             🔙 BACK CAM
@@ -1216,8 +1248,8 @@ function MobileControllerContent() {
                         <button
                             onClick={() => startStreaming('user')}
                             className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${activeCamera === 'user' && isStreaming
-                                    ? 'bg-purple-600 shadow-lg shadow-purple-500/30'
-                                    : 'bg-gray-700 hover:bg-gray-600'
+                                ? 'bg-purple-600 shadow-lg shadow-purple-500/30'
+                                : 'bg-gray-700 hover:bg-gray-600'
                                 }`}
                         >
                             🤳 FRONT CAM
@@ -1228,8 +1260,8 @@ function MobileControllerContent() {
                     <button
                         onClick={isStreaming ? stopStreaming : () => startStreaming(activeCamera)}
                         className={`w-full py-4 rounded-xl font-bold text-lg transition-all ${isStreaming
-                                ? 'bg-gradient-to-r from-red-600 to-pink-600 shadow-lg shadow-red-500/30'
-                                : 'bg-gradient-to-r from-purple-600 to-pink-600 shadow-lg shadow-purple-500/30'
+                            ? 'bg-gradient-to-r from-red-600 to-pink-600 shadow-lg shadow-red-500/30'
+                            : 'bg-gradient-to-r from-purple-600 to-pink-600 shadow-lg shadow-purple-500/30'
                             }`}
                     >
                         {isStreaming ? '⏹ STOP STREAMING' : '▶ START STREAMING'}
@@ -1748,6 +1780,27 @@ function MobileControllerContent() {
                 </div>
             </div>
         );
+    }
+
+    // --- DRIVE MODE (Police Chase) ---
+    // Now uses modular DriveMode component from ./modes
+    if (modeParam === 'drive') {
+        const sendData = (data: any) => connRef.current?.send(data);
+        return <DriveMode isConnected={isConnected} send={sendData} />;
+    }
+
+    // --- EXCAVATOR MODE ---
+    // D-pad and button controls for excavator
+    if (modeParam === 'excavator') {
+        const sendData = (data: any) => connRef.current?.send(data);
+        return <ExcavatorMode isConnected={isConnected} send={sendData} />;
+    }
+
+    // --- LOADER MODE (JCB) ---
+    // Slider controls for loader lift, bucket, steering, throttle
+    if (modeParam === 'loader') {
+        const sendData = (data: any) => connRef.current?.send(data);
+        return <LoaderMode isConnected={isConnected} send={sendData} />;
     }
 
     // Default Cube/Gravity Interface

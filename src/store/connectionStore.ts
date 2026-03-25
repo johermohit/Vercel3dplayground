@@ -21,6 +21,8 @@ interface ConnectionState {
         light?: { illuminance: number };
         camera?: { count: number; cameras: { id: string; label: string }[]; streaming?: boolean; facing?: string };
         frameAnalysis?: { avgColor: { r: number; g: number; b: number }; brightness: number; colorName: string; timestamp: number };
+        excavator?: { forward: boolean; backward: boolean; left: boolean; right: boolean; armUp: boolean; armDown: boolean; bucketUp: boolean; bucketDown: boolean };
+        loader?: { lift: number; bucket: number; steering: number; throttle: number };
     };
     setSessionId: (id: string) => void;
     setConnected: (status: boolean) => void;
